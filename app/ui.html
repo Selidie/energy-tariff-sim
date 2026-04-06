@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Energy Tariff Simulator</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #22263a;
+    --border: #2e3250;
+    --accent: #4f8ef7;
+    --accent2: #34d399;
+    --danger: #f87171;
+    --text: #e2e8f0;
+    --muted: #8892aa;
+    --font: 'Inter', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; }
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  header h1 { font-size: 18px; font-weight: 600; }
+  header span { color: var(--muted); font-size: 13px; }
+  #status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted); flex-shrink: 0;
+  }
+  #status-dot.ok { background: var(--accent2); }
+  #status-dot.err { background: var(--danger); }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  .toolbar {
+    display: flex; gap: 10px; margin-bottom: 24px; flex-wrap: wrap;
+  }
+  button {
+    padding: 8px 18px; border-radius: 6px; border: none;
+    cursor: pointer; font-size: 13px; font-weight: 500;
+    transition: opacity .15s;
+  }
+  button:hover { opacity: .85; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .card h2 { font-size: 15px; font-weight: 600; margin-bottom: 16px; color: var(--text); }
+  .card h3 { font-size: 13px; font-weight: 600; margin-bottom: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+  }
+  .metric {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .metric .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
+  .metric .value { font-size: 22px; font-weight: 700; color: var(--text); }
+  .metric .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .metric.best .value { color: var(--accent2); }
+  .metric.worst .value { color: var(--danger); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px 12px; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--surface2); }
+  .tag {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 600;
+  }
+  .tag-baseline { background: #1e3a5f; color: var(--accent); }
+  .tag-save { background: #064e3b; color: var(--accent2); }
+  .tag-cost { background: #7f1d1d; color: var(--danger); }
+  .diff-pos { color: var(--danger); }
+  .diff-neg { color: var(--accent2); }
+  .log {
+    background: #0a0c12;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-family: 'Fira Mono', 'Cascadia Code', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    max-height: 160px;
+    overflow-y: auto;
+    margin-top: 8px;
+  }
+  .log .info { color: var(--accent); }
+  .log .ok { color: var(--accent2); }
+  .log .err { color: var(--danger); }
+  select {
+    background: var(--surface2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 7px 10px; font-size: 13px; cursor: pointer;
+  }
+  .flex { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .hidden { display: none !important; }
+  #spinner {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .7s linear infinite;
+    vertical-align: middle; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header>
+  <div id="status-dot"></div>
+  <h1>⚡ Energy Tariff Simulator</h1>
+  <span id="header-status">connecting…</span>
+</header>
+
+<main>
+
+  <!-- Pipeline controls -->
+  <div class="card">
+    <h2>Pipeline</h2>
+    <div class="toolbar">
+      <button class="btn-primary" onclick="runFull()">▶ Run Full Pipeline</button>
+      <button class="btn-secondary" onclick="runIngest()">① Ingest</button>
+      <button class="btn-secondary" onclick="runAggregate()">② Aggregate</button>
+      <button class="btn-secondary" onclick="runSimulate()">③ Simulate</button>
+    </div>
+    <div id="log" class="log"><span class="info">Ready.</span></div>
+  </div>
+
+  <!-- Comparison table -->
+  <div class="card" id="compare-card">
+    <h2>Tariff Comparison</h2>
+    <div id="compare-content"><span style="color:var(--muted)">Run the pipeline to see results.</span></div>
+  </div>
+
+  <!-- Daily / Monthly detail -->
+  <div class="card">
+    <h2>Detailed Breakdown</h2>
+    <div class="flex" style="margin-bottom:16px">
+      <select id="tariff-select" onchange="loadDetail()"><option value="">— select tariff —</option></select>
+      <select id="view-select" onchange="loadDetail()">
+        <option value="daily">Daily</option>
+        <option value="monthly">Monthly</option>
+      </select>
+    </div>
+    <div id="detail-content"><span style="color:var(--muted)">Select a tariff above.</span></div>
+  </div>
+
+</main>
+
+<script>
+const API = '';  // same origin
+
+// ── Logging ────────────────────────────────────────────────────────────────
+const logEl = document.getElementById('log');
+function log(msg, cls = '') {
+  const line = document.createElement('div');
+  line.innerHTML = `<span class="${cls}">${new Date().toLocaleTimeString()} ${msg}</span>`;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ── Health check ───────────────────────────────────────────────────────────
+async function checkHealth() {
+  try {
+    const r = await fetch(`${API}/health`);
+    const d = await r.json();
+    document.getElementById('status-dot').className = 'ok';
+    document.getElementById('header-status').textContent =
+      `API OK · ${d.tariffs?.length ?? 0} tariff(s)`;
+  } catch {
+    document.getElementById('status-dot').className = 'err';
+    document.getElementById('header-status').textContent = 'API unreachable';
+  }
+}
+
+// ── Pipeline actions ───────────────────────────────────────────────────────
+async function post(path, label) {
+  log(`${label}…`, 'info');
+  disableButtons(true);
+  try {
+    const r = await fetch(`${API}${path}`, { method: 'POST' });
+    const d = await r.json();
+    if (!r.ok || !d.success) throw new Error(d.error || r.statusText);
+    return d;
+  } catch (e) {
+    log(`✗ ${label} failed: ${e.message}`, 'err');
+    throw e;
+  } finally {
+    disableButtons(false);
+  }
+}
+
+async function runIngest() {
+  try {
+    const d = await post('/ingest', 'Ingest');
+    log(`✓ Ingest: ${d.rows} rows  ${d.from?.slice(0,10)} → ${d.to?.slice(0,10)}`, 'ok');
+  } catch {}
+}
+
+async function runAggregate() {
+  try {
+    const d = await post('/aggregate', 'Aggregate');
+    log(`✓ Aggregate: ${d.intervals} intervals  ${d.from?.slice(0,10)} → ${d.to?.slice(0,10)}`, 'ok');
+  } catch {}
+}
+
+async function runSimulate() {
+  log('Simulating…', 'info');
+  disableButtons(true);
+  try {
+    const r = await fetch(`${API}/simulate`);
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error);
+    log(`✓ Simulation complete — ${d.comparison?.length} tariff(s)`, 'ok');
+    renderComparison(d);
+  } catch (e) {
+    log(`✗ Simulate failed: ${e.message}`, 'err');
+  } finally {
+    disableButtons(false);
+  }
+}
+
+async function runFull() {
+  log('Starting full pipeline…', 'info');
+  disableButtons(true);
+  try {
+    const r = await fetch(`${API}/run`, { method: 'POST' });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error);
+    log(`✓ Pipeline complete — ${d.comparison?.length} tariff(s)`, 'ok');
+    renderComparison(d);
+  } catch (e) {
+    log(`✗ Pipeline failed: ${e.message}`, 'err');
+  } finally {
+    disableButtons(false);
+  }
+}
+
+// ── Render comparison ──────────────────────────────────────────────────────
+function renderComparison(data) {
+  const { comparison, baseline_id } = data;
+  if (!comparison?.length) return;
+
+  // Populate tariff selector
+  const sel = document.getElementById('tariff-select');
+  sel.innerHTML = comparison.map(t =>
+    `<option value="${t.tariff_id}">${t.tariff_name}</option>`
+  ).join('');
+
+  // Summary metrics for cheapest
+  const sorted = [...comparison].sort((a, b) => a.total_net_cost_gbp - b.total_net_cost_gbp);
+  const cheapest = sorted[0];
+  const baseline = comparison.find(t => t.tariff_id === baseline_id) || comparison[0];
+
+  // Comparison table
+  const rows = comparison.map(t => {
+    const isBaseline = t.tariff_id === baseline_id;
+    const diff = t.diff_vs_baseline_gbp;
+    const diffStr = isBaseline
+      ? '<span class="tag tag-baseline">Baseline</span>'
+      : diff < 0
+        ? `<span class="tag tag-save">Save £${Math.abs(diff).toFixed(2)}</span>`
+        : `<span class="tag tag-cost">+£${diff.toFixed(2)}</span>`;
+    return `
+      <tr>
+        <td><strong>${t.tariff_name}</strong></td>
+        <td>£${t.total_net_cost_gbp.toFixed(2)}</td>
+        <td>${t.total_import_kwh.toFixed(1)} kWh</td>
+        <td>${t.total_export_kwh.toFixed(1)} kWh</td>
+        <td>£${(t.total_standing_p/100).toFixed(2)}</td>
+        <td>${diffStr}</td>
+      </tr>`;
+  }).join('');
+
+  document.getElementById('compare-content').innerHTML = `
+    <div class="summary-grid" style="margin-bottom:20px">
+      <div class="metric">
+        <div class="label">Period</div>
+        <div class="value" style="font-size:15px">${baseline.date_from}</div>
+        <div class="sub">→ ${baseline.date_to}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Intervals</div>
+        <div class="value">${baseline.interval_count?.toLocaleString()}</div>
+        <div class="sub">30-min billing slots</div>
+      </div>
+      <div class="metric best">
+        <div class="label">Cheapest Tariff</div>
+        <div class="value">£${cheapest.total_net_cost_gbp.toFixed(2)}</div>
+        <div class="sub">${cheapest.tariff_name}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Max Saving vs Baseline</div>
+        <div class="value ${cheapest.diff_vs_baseline_gbp < 0 ? 'diff-neg' : ''}">
+          ${cheapest.diff_vs_baseline_gbp < 0 ? '−£' + Math.abs(cheapest.diff_vs_baseline_gbp).toFixed(2) : '—'}
+        </div>
+        <div class="sub">vs ${baseline.tariff_name}</div>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Tariff</th><th>Net Cost</th><th>Import</th><th>Export</th><th>Standing</th><th>vs Baseline</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ── Detail breakdown ───────────────────────────────────────────────────────
+async function loadDetail() {
+  const tariff = document.getElementById('tariff-select').value;
+  const view   = document.getElementById('view-select').value;
+  if (!tariff) return;
+
+  document.getElementById('detail-content').innerHTML =
+    '<span style="color:var(--muted)"><span id="spinner"></span>Loading…</span>';
+
+  try {
+    const r = await fetch(`${API}/results/${view}?tariff=${tariff}`);
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error);
+
+    const records = d[view];
+    if (!records?.length) {
+      document.getElementById('detail-content').innerHTML =
+        '<span style="color:var(--muted)">No data.</span>';
+      return;
+    }
+
+    const isMonthly = view === 'monthly';
+    const dateKey = isMonthly ? 'interval_start' : '_date';
+
+    const rows = records.map(r => {
+      const date = isMonthly
+        ? new Date(r[dateKey]).toLocaleDateString('en-GB', {month:'short', year:'numeric'})
+        : r[dateKey];
+      return `<tr>
+        <td>${date}</td>
+        <td>${(r.import_kwh??0).toFixed(3)}</td>
+        <td>${(r.export_kwh??0).toFixed(3)}</td>
+        <td>${((r.import_cost_p??0)/100).toFixed(2)}</td>
+        <td>${((r.export_credit_p??0)/100).toFixed(2)}</td>
+        <td>${((r.standing_p??0)/100).toFixed(2)}</td>
+        <td><strong>£${(r.net_cost_gbp??0).toFixed(2)}</strong></td>
+      </tr>`;
+    }).join('');
+
+    document.getElementById('detail-content').innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>${isMonthly ? 'Month' : 'Date'}</th>
+            <th>Import kWh</th><th>Export kWh</th>
+            <th>Import £</th><th>Export £</th><th>Standing £</th>
+            <th>Net £</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  } catch (e) {
+    document.getElementById('detail-content').innerHTML =
+      `<span class="err">Error: ${e.message}</span>`;
+  }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function disableButtons(state) {
+  document.querySelectorAll('button').forEach(b => b.disabled = state);
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+checkHealth();
+setInterval(checkHealth, 30000);
+</script>
+</body>
+</html>

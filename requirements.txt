@@ -1,0 +1,6 @@
+pandas>=2.0
+pyyaml
+requests
+flask>=3.0
+flask-cors
+apscheduler

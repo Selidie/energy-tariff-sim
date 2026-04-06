@@ -1,0 +1,10 @@
+venv/
+.env
+data/raw/
+data/aggregated/
+__pycache__/
+*.pyc
+*.pyo
+*.parquet
+.DS_Store
+*.log

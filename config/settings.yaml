@@ -1,0 +1,39 @@
+mqtt:
+  api_url: "http://mqtt-bridge:5003"
+
+  topics:
+    grid_power:    "total/grid_power/state"
+    pv_power:      "total/pv_power/state"
+    battery_power: "total/battery_power/state"
+    load_power:    "total/load_power/state"
+
+storage:
+  raw_path:        "/app/data/raw/"
+  aggregated_path: "/app/data/aggregated/"
+
+simulation:
+  interval_minutes: 30
+  history_range:    "30d"
+  history_window:   "1m"
+
+tariffs:
+  - id: "flat_standard"
+    name: "Standard Variable (Flat)"
+    type: "flat"
+    standing_charge: 53.37
+    import_rate: 24.50
+    export_rate: 15.00
+
+  - id: "economy7"
+    name: "Economy 7"
+    type: "day_night"
+    standing_charge: 53.37
+    export_rate: 15.00
+    day:
+      rate: 28.62
+      start: "07:00"
+      end:   "00:00"
+    night:
+      rate: 13.10
+      start: "00:00"
+      end:   "07:00"

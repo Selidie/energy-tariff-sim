@@ -1,0 +1,21 @@
+services:
+  energy-tariff-sim:
+    build: ./energy-tarriff-sim
+    container_name: energy-tariff-sim
+    restart: unless-stopped
+    ports:
+      - "5011:5011"
+    volumes:
+      - /mnt/container-data/energy-tariff-sim/data:/app/data
+      - /mnt/container-data/energy-tariff-sim/config:/app/config
+    environment:
+      - PORT=5011
+      - CONFIG_PATH=/app/config/settings.yaml
+    depends_on:
+      - mqtt-bridge
+    networks:
+      - frontend
+
+networks:
+  frontend:
+    external: true
