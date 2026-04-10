@@ -9,7 +9,6 @@
     --bg: #0f1117; --surface: #1a1d27; --surface2: #22263a; --border: #2e3250;
     --accent: #4f8ef7; --accent2: #34d399; --danger: #f87171; --warning: #fbbf24;
     --gold: #f59e0b; --text: #e2e8f0; --muted: #8892aa; --font: 'Inter', system-ui, sans-serif;
-    --night: #7c6fff; --day: #fbbf24;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; }
@@ -33,11 +32,11 @@
   .toolbar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
   button {
     padding: 8px 18px; border-radius: 6px; border: none;
-    cursor: pointer; font-size: 13px; font-weight: 500; transition: all .15s;
+    cursor: pointer; font-size: 13px; font-weight: 500; transition: opacity .15s;
   }
   button:hover { opacity: .85; }
   button:disabled { opacity: .4; cursor: not-allowed; }
-  .btn-primary   { background: var(--accent); color: #fff; min-width: 160px; }
+  .btn-primary   { background: var(--accent); color: #fff; }
   .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
   .btn-danger    { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 20px; }
@@ -60,8 +59,6 @@
   .tag-baseline { background: rgba(245,158,11,.15); color: var(--gold); border: 1px solid rgba(245,158,11,.3); }
   .tag-save { background: #064e3b; color: var(--accent2); }
   .tag-cost { background: #7f1d1d; color: var(--danger); }
-  .tag-night { background: rgba(124,111,255,.15); color: var(--night); border: 1px solid rgba(124,111,255,.3); font-size: 10px; }
-  .tag-day   { background: rgba(251,191,36,.1);  color: var(--day);   border: 1px solid rgba(251,191,36,.25); font-size: 10px; }
   .diff-neg { color: var(--accent2); }
   .log {
     background: #0a0c12; border: 1px solid var(--border); border-radius: 8px;
@@ -77,67 +74,25 @@
   }
   .flex { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .saved-at { font-size: 11px; color: var(--muted); font-style: italic; }
-
-  /* ── Button spinner ── */
-  .btn-spin {
-    display: inline-block; width: 13px; height: 13px; vertical-align: middle;
-    border: 2px solid rgba(255,255,255,.3); border-top-color: #fff;
-    border-radius: 50%; animation: spin .65s linear infinite; margin-right: 7px;
-  }
-  .btn-spin-dark {
-    border-color: rgba(79,142,247,.25); border-top-color: var(--accent);
+  #spinner {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 6px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ── Pipeline progress tracker ── */
-  #pipeline-progress {
-    display: none;
-    background: var(--surface2); border: 1px solid var(--border); border-radius: 10px;
-    padding: 20px 24px; margin-bottom: 20px;
+  /* ── Version badge ── */
+  .version-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 12px; color: var(--muted);
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 5px; padding: 3px 8px; white-space: nowrap;
+    text-decoration: none;
   }
-  #pipeline-progress h3 {
-    font-size: 13px; font-weight: 600; color: var(--muted);
-    text-transform: uppercase; letter-spacing: .05em; margin-bottom: 16px;
-  }
-  .pipeline-steps { display: flex; align-items: center; gap: 0; }
-  .pipeline-step {
-    display: flex; flex-direction: column; align-items: center; flex: 1; position: relative;
-  }
-  .pipeline-step:not(:last-child)::after {
-    content: ''; position: absolute; top: 18px; left: 50%; width: 100%;
-    height: 2px; background: var(--border); z-index: 0;
-  }
-  .pipeline-step.done:not(:last-child)::after    { background: var(--accent2); }
-  .pipeline-step.active:not(:last-child)::after  { background: var(--border); }
-  .step-icon {
-    width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center;
-    justify-content: center; font-size: 15px; z-index: 1; position: relative;
-    background: var(--border); border: 2px solid var(--border); transition: all .3s;
-  }
-  .pipeline-step.done   .step-icon { background: var(--accent2); border-color: var(--accent2); color: #0f1117; }
-  .pipeline-step.active .step-icon { background: var(--accent);  border-color: var(--accent);  color: #fff; }
-  .pipeline-step.error  .step-icon { background: var(--danger);  border-color: var(--danger);  color: #fff; }
-  .step-label {
-    font-size: 11px; color: var(--muted); margin-top: 8px; font-weight: 500;
-    text-align: center; white-space: nowrap;
-  }
-  .pipeline-step.done   .step-label { color: var(--accent2); }
-  .pipeline-step.active .step-label { color: var(--text); }
-  .pipeline-step.error  .step-label { color: var(--danger); }
-  .step-sub {
-    font-size: 10px; color: var(--muted); text-align: center; margin-top: 2px;
-    min-height: 14px;
-  }
-
-  /* ── Stale results banner ── */
-  .stale-banner {
-    display: flex; align-items: center; gap: 10px;
-    background: rgba(251,191,36,.07); border: 1px solid rgba(251,191,36,.3);
-    border-radius: 8px; padding: 10px 14px; margin-bottom: 16px;
-    font-size: 12px; color: var(--warning);
-  }
-  .stale-banner .stale-icon { font-size: 16px; flex-shrink: 0; }
-  .stale-banner a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+  .version-badge:hover { border-color: var(--accent); color: var(--text); }
+  .version-badge .ver-icon { font-size: 13px; line-height: 1; }
+  .version-badge.up-to-date .ver-icon { color: var(--accent2); }
+  .version-badge.outdated   .ver-icon { color: var(--danger); }
 
   /* ── Date range row ── */
   .date-range-row {
@@ -155,34 +110,6 @@
   .date-range-row input[type="date"]:focus { outline: none; border-color: var(--accent); }
   .date-range-sep { color: var(--muted); font-size: 12px; }
   .date-range-hint { font-size: 11px; color: var(--muted); font-style: italic; margin-left: auto; }
-
-  /* ── Per-tariff breakdown cards ── */
-  .tariff-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-top: 20px; }
-  .tariff-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-  .tariff-card-header {
-    padding: 12px 16px; border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  .tariff-card-header .name { font-weight: 600; font-size: 14px; }
-  .tariff-card-header .type-badge {
-    font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
-    padding: 2px 7px; border-radius: 4px;
-    background: rgba(79,142,247,.12); color: var(--accent); border: 1px solid rgba(79,142,247,.25);
-  }
-  .breakdown-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .breakdown-table td { padding: 9px 16px; border-bottom: 1px solid var(--border); }
-  .breakdown-table tr:last-child td { border-bottom: none; }
-  .breakdown-table .row-label { color: var(--muted); width: 55%; }
-  .breakdown-table .row-value { text-align: right; font-variant-numeric: tabular-nums; font-weight: 500; }
-  .breakdown-table .row-value.credit { color: var(--accent2); }
-  .breakdown-table .row-value.night  { color: var(--night); }
-  .breakdown-table .row-value.day    { color: var(--day); }
-  .breakdown-table tr.section-divider td { border-top: 1px solid var(--border); background: rgba(255,255,255,.02); }
-  .breakdown-table tr.total-row td { font-weight: 700; font-size: 14px; }
-  .breakdown-table tr.total-row td.row-value { color: var(--text); }
-  .rate-badge {
-    display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; margin-left: 6px; vertical-align: middle;
-  }
 </style>
 </head>
 <body>
@@ -190,6 +117,10 @@
 <header>
   <div id="status-dot"></div>
   <h1>⚡ Energy Tariff Simulator</h1>
+  <a id="version-badge" class="version-badge" href="#" target="_blank" rel="noopener" title="Checking version…">
+    <span class="ver-icon" id="ver-icon">○</span>
+    <span id="ver-label">…</span>
+  </a>
   <span id="header-status">connecting…</span>
   <nav class="nav-links">
     <a href="/" class="active">Simulator</a>
@@ -202,6 +133,7 @@
   <div class="card">
     <h2>Pipeline</h2>
 
+    <!-- Date range selector -->
     <div class="date-range-row">
       <label for="date-from">Ingest from</label>
       <input type="date" id="date-from" />
@@ -212,39 +144,12 @@
     </div>
 
     <div class="toolbar">
-      <button class="btn-primary" id="run-full-btn" onclick="runFull()">▶ Run Full Pipeline</button>
-      <button class="btn-secondary" id="btn-ingest"    onclick="runIngest()">① Ingest</button>
-      <button class="btn-secondary" id="btn-aggregate" onclick="runAggregate()">② Aggregate</button>
-      <button class="btn-secondary" id="btn-simulate"  onclick="runSimulate()">③ Simulate</button>
+      <button class="btn-primary" onclick="runFull()">▶ Run Full Pipeline</button>
+      <button class="btn-secondary" onclick="runIngest()">① Ingest</button>
+      <button class="btn-secondary" onclick="runAggregate()">② Aggregate</button>
+      <button class="btn-secondary" onclick="runSimulate()">③ Simulate</button>
     </div>
     <div id="log" class="log"><span class="info">Ready.</span></div>
-  </div>
-
-  <!-- Pipeline progress tracker — shown only during a full run -->
-  <div id="pipeline-progress">
-    <h3>Pipeline running…</h3>
-    <div class="pipeline-steps">
-      <div class="pipeline-step" id="step-ingest">
-        <div class="step-icon">①</div>
-        <div class="step-label">Ingest</div>
-        <div class="step-sub" id="step-ingest-sub"></div>
-      </div>
-      <div class="pipeline-step" id="step-aggregate">
-        <div class="step-icon">②</div>
-        <div class="step-label">Aggregate</div>
-        <div class="step-sub" id="step-aggregate-sub"></div>
-      </div>
-      <div class="pipeline-step" id="step-simulate">
-        <div class="step-icon">③</div>
-        <div class="step-label">Simulate</div>
-        <div class="step-sub" id="step-simulate-sub"></div>
-      </div>
-      <div class="pipeline-step" id="step-done">
-        <div class="step-icon">✓</div>
-        <div class="step-label">Complete</div>
-        <div class="step-sub" id="step-done-sub"></div>
-      </div>
-    </div>
   </div>
 
   <div class="card" id="compare-card">
@@ -252,13 +157,8 @@
       <h2>Tariff Comparison</h2>
       <div class="flex">
         <span class="saved-at" id="saved-at-label"></span>
-        <button class="btn-danger" id="clear-btn" onclick="clearResults()" style="display:none;padding:5px 12px;font-size:12px">✕ Clear</button>
+        <button class="btn-danger" id="clear-btn" onclick="clearResults()" style="display:none;padding:5px 12px;font-size:12px">✕ Clear Comparison</button>
       </div>
-    </div>
-    <div id="stale-banner" class="stale-banner" style="display:none">
-      <span class="stale-icon">⚠️</span>
-      <span>Tariff config has changed since these results were calculated — values may be out of date.
-        <a onclick="runFull()">Re-run the pipeline</a> to update.</span>
     </div>
     <div id="compare-content"><span style="color:var(--muted)">Run the pipeline to see results.</span></div>
   </div>
@@ -279,53 +179,83 @@
 </main>
 
 <script>
-const API = '';
+const API        = '';
+const GH_REPO   = 'selidie/energy-tarriff-sim';
+const GH_API_URL = `https://api.github.com/repos/${GH_REPO}/releases/latest`;
+const GH_REL_URL = `https://github.com/${GH_REPO}/releases/latest`;
 
-// ── Session cache ─────────────────────────────────────────────────────────
+// ── Version / update check ────────────────────────────────────────────────
 
-const SESSION_RESULTS_KEY  = 'ets_results_v1';
-const SESSION_TARHASH_KEY  = 'ets_tariff_hash_v1';
+/**
+ * Normalise a version string for comparison.
+ * Strips a leading 'v' so "v1.2.3" == "1.2.3".
+ * Returns the string as-is for dev/commit-hash builds that don't match semver.
+ */
+function _stripV(v) { return v ? v.replace(/^v/, '') : ''; }
 
-function _sessionSave(results) {
-  try { sessionStorage.setItem(SESSION_RESULTS_KEY, JSON.stringify(results)); } catch {}
-}
-function _sessionLoad() {
-  try { return JSON.parse(sessionStorage.getItem(SESSION_RESULTS_KEY)); } catch { return null; }
-}
-function _sessionSaveTariffHash(h) {
-  try { sessionStorage.setItem(SESSION_TARHASH_KEY, h); } catch {}
-}
-function _sessionLoadTariffHash() {
-  try { return sessionStorage.getItem(SESSION_TARHASH_KEY) || ''; } catch { return ''; }
-}
-function _sessionClear() {
-  try { sessionStorage.removeItem(SESSION_RESULTS_KEY); sessionStorage.removeItem(SESSION_TARHASH_KEY); } catch {}
-}
+async function checkVersion(currentVersion) {
+  const badge   = document.getElementById('version-badge');
+  const icon    = document.getElementById('ver-icon');
+  const label   = document.getElementById('ver-label');
 
-function _tariffHash(tariffs) {
-  if (!tariffs || !tariffs.length) return '';
-  const sig = tariffs.map(t => [
-    t.id, t.type, t.standing_charge, t.export_rate,
-    t.import_rate,
-    t.day_rate, t.night_rate, t.night_start, t.night_end,
-    t.day?.rate, t.night?.rate, t.day?.start, t.night?.start,
-  ].join('|')).join('::');
-  let h = 0;
-  for (let i = 0; i < sig.length; i++) { h = (Math.imul(31, h) + sig.charCodeAt(i)) | 0; }
-  return String(h);
+  // Show the running version immediately
+  const displayVer = currentVersion && currentVersion !== 'dev'
+    ? `v${_stripV(currentVersion)}`
+    : currentVersion || 'dev';
+  label.textContent = displayVer;
+  badge.href = GH_REL_URL;
+
+  // Dev / commit-hash builds — don't attempt a version comparison
+  if (!currentVersion || currentVersion === 'dev' || /^\d+\.[a-f0-9]+$/.test(currentVersion)) {
+    icon.textContent  = '○';
+    badge.title = 'Dev build — no release version to compare';
+    return;
+  }
+
+  try {
+    const resp = await fetch(GH_API_URL, {
+      headers: { Accept: 'application/vnd.github+json' },
+      cache: 'no-store',
+    });
+    if (!resp.ok) throw new Error(`GitHub API ${resp.status}`);
+    const rel        = await resp.json();
+    const latest     = _stripV(rel.tag_name || '');
+    const current    = _stripV(currentVersion);
+
+    if (latest && latest === current) {
+      icon.textContent = '✔';
+      badge.classList.add('up-to-date');
+      badge.title = `Up to date (${displayVer})`;
+    } else if (latest) {
+      icon.textContent = '✘';
+      badge.classList.add('outdated');
+      badge.title = `Update available: v${latest} (you have ${displayVer}) — click to view release`;
+      label.textContent = `${displayVer} → v${latest}`;
+    }
+  } catch (err) {
+    // Network failure, rate limit, etc. — show the version but no indicator
+    icon.textContent = '○';
+    badge.title = `Could not check for updates: ${err.message}`;
+  }
 }
 
 // ── Date range helpers ────────────────────────────────────────────────────
 
-function _isoToday() { return new Date().toISOString().slice(0, 10); }
-function _defaultFrom() { return '2024-06-01'; }
+function _isoToday() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function _defaultFrom() {
+  return '2024-06-01';
+}
 
 function initDateRange() {
   const fromEl = document.getElementById('date-from');
   const toEl   = document.getElementById('date-to');
   fromEl.value = _defaultFrom();
   toEl.value   = _isoToday();
-  fromEl.max = toEl.max = _isoToday();
+  fromEl.max = _isoToday();
+  toEl.max   = _isoToday();
   fromEl.addEventListener('change', () => {
     if (toEl.value && toEl.value < fromEl.value) toEl.value = fromEl.value;
     updateDateHint();
@@ -368,127 +298,58 @@ function log(msg, cls = '') {
 
 // ── Health ────────────────────────────────────────────────────────────────
 
+let _versionChecked = false;
+
 async function checkHealth() {
   try {
     const d = await (await fetch(`${API}/health`)).json();
     document.getElementById('status-dot').className = 'ok';
     document.getElementById('header-status').textContent =
       `API OK · ${d.tariffs?.length ?? 0} tariff(s) · ${d.history_range || '700d'} history`;
+
+    // Version check runs only once, on the first successful health response
+    if (!_versionChecked) {
+      _versionChecked = true;
+      checkVersion(d.version || 'dev');
+    }
   } catch {
     document.getElementById('status-dot').className = 'err';
     document.getElementById('header-status').textContent = 'API unreachable';
   }
 }
 
-// ── Stale detection ───────────────────────────────────────────────────────
-
-async function checkTariffStaleness() {
-  const savedHash = _sessionLoadTariffHash();
-  if (!savedHash) return;
-  try {
-    const d = await (await fetch(`${API}/api/config`)).json();
-    if (!d.success) return;
-    const currentHash = _tariffHash(d.config?.tariffs || []);
-    document.getElementById('stale-banner').style.display = currentHash !== savedHash ? '' : 'none';
-  } catch {}
-}
-
 // ── Saved results ─────────────────────────────────────────────────────────
 
 async function loadSavedResults() {
-  const cached = _sessionLoad();
-  if (cached) {
-    renderComparison(cached);
-    if (cached.saved_at) _showSavedAt(cached.saved_at);
-    document.getElementById('clear-btn').style.display = '';
-  }
-
   try {
     const d = await (await fetch(`${API}/api/results`)).json();
     if (d.success && d.results) {
       renderComparison(d.results);
-      _sessionSave(d.results);
-      if (d.results.saved_at) _showSavedAt(d.results.saved_at);
+      if (d.results.saved_at) {
+        const dt = new Date(d.results.saved_at);
+        document.getElementById('saved-at-label').textContent =
+          `Last run: ${dt.toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'})} at ${dt.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'})}`;
+      }
       document.getElementById('clear-btn').style.display = '';
     }
   } catch {}
-
-  await checkTariffStaleness();
-}
-
-function _showSavedAt(iso) {
-  const dt = new Date(iso);
-  document.getElementById('saved-at-label').textContent =
-    `Last run: ${dt.toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'})} at ${dt.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'})}`;
 }
 
 async function clearResults() {
   try { await fetch(`${API}/api/results`, { method: 'DELETE' }); } catch {}
-  _sessionClear();
   document.getElementById('compare-content').innerHTML = '<span style="color:var(--muted)">Run the pipeline to see results.</span>';
   document.getElementById('tariff-select').innerHTML = '<option value="">— select tariff —</option>';
   document.getElementById('detail-content').innerHTML = '<span style="color:var(--muted)">Select a tariff above.</span>';
   document.getElementById('saved-at-label').textContent = '';
   document.getElementById('clear-btn').style.display = 'none';
-  document.getElementById('stale-banner').style.display = 'none';
   log('Comparison cleared.', 'info');
-}
-
-// ── Pipeline button state ─────────────────────────────────────────────────
-
-function setPipelineRunning(running) {
-  const btn = document.getElementById('run-full-btn');
-  const others = ['btn-ingest','btn-aggregate','btn-simulate'];
-  if (running) {
-    btn.disabled = true;
-    btn.innerHTML = `<span class="btn-spin"></span>Running…`;
-    others.forEach(id => { document.getElementById(id).disabled = true; });
-  } else {
-    btn.disabled = false;
-    btn.innerHTML = '▶ Run Full Pipeline';
-    others.forEach(id => { document.getElementById(id).disabled = false; });
-  }
-}
-
-function disableButtons(state) {
-  document.querySelectorAll('button').forEach(b => b.disabled = state);
-  if (!state) {
-    const btn = document.getElementById('run-full-btn');
-    if (btn.innerHTML.includes('Running')) btn.innerHTML = '▶ Run Full Pipeline';
-  }
-}
-
-// ── Progress tracker ──────────────────────────────────────────────────────
-
-function _setStep(id, state, sub = '') {
-  const el     = document.getElementById(id);
-  const sub_el = document.getElementById(id + '-sub');
-  el.className = 'pipeline-step ' + state;
-  if (sub_el) sub_el.textContent = sub;
-  const nums = {'step-ingest':'①','step-aggregate':'②','step-simulate':'③','step-done':'✓'};
-  if (state === 'active') {
-    el.querySelector('.step-icon').innerHTML = '<span class="btn-spin btn-spin-dark" style="width:14px;height:14px;margin:0"></span>';
-  } else if (state === 'done') {
-    el.querySelector('.step-icon').innerHTML = '✓';
-  } else if (state === 'error') {
-    el.querySelector('.step-icon').innerHTML = '✗';
-  } else {
-    el.querySelector('.step-icon').innerHTML = nums[id] || '·';
-  }
-}
-
-function showProgress(visible) {
-  document.getElementById('pipeline-progress').style.display = visible ? '' : 'none';
-  if (!visible) {
-    ['step-ingest','step-aggregate','step-simulate','step-done'].forEach(id => _setStep(id, '', ''));
-    document.getElementById('pipeline-progress').querySelector('h3').textContent = 'Pipeline running…';
-  }
 }
 
 // ── Pipeline actions ──────────────────────────────────────────────────────
 
 async function post(path, label, body = null) {
   log(`${label}…`, 'info');
+  disableButtons(true);
   try {
     const opts = { method: 'POST' };
     if (body) { opts.headers = {'Content-Type': 'application/json'}; opts.body = JSON.stringify(body); }
@@ -499,172 +360,65 @@ async function post(path, label, body = null) {
   } catch (e) {
     log(`✗ ${label} failed: ${e.message}`, 'err');
     throw e;
+  } finally {
+    disableButtons(false);
   }
 }
 
 async function runIngest() {
   const range = getDateRange();
   const label = range.date_from && range.date_to
-    ? `Ingest (${range.date_from} → ${range.date_to})` : 'Ingest';
-  disableButtons(true);
+    ? `Ingest (${range.date_from} → ${range.date_to})`
+    : 'Ingest';
   try {
     const d = await post('/ingest', label, range);
     log(`✓ Ingest: ${d.rows} rows  ${d.from?.slice(0,10)} → ${d.to?.slice(0,10)}`, 'ok');
   } catch {}
-  finally { disableButtons(false); }
 }
 
 async function runAggregate() {
-  disableButtons(true);
   try {
     const d = await post('/aggregate', 'Aggregate');
     log(`✓ Aggregate: ${d.intervals} intervals  ${d.from?.slice(0,10)} → ${d.to?.slice(0,10)}`, 'ok');
   } catch {}
-  finally { disableButtons(false); }
 }
 
 async function runSimulate() {
-  log('Simulating…', 'info');
-  disableButtons(true);
+  log('Simulating…', 'info'); disableButtons(true);
   try {
     const d = await (await fetch(`${API}/simulate`)).json();
     if (!d.success) throw new Error(d.error);
     log(`✓ Simulation complete — ${d.comparison?.length} tariff(s)`, 'ok');
-    _onResultsReady(d);
+    renderComparison(d); showResultMeta(d);
   } catch(e) { log(`✗ Simulate failed: ${e.message}`, 'err'); }
   finally { disableButtons(false); }
 }
 
 async function runFull() {
-  const range      = getDateRange();
-  const rangeLabel = range.date_from && range.date_to
-    ? `${range.date_from} → ${range.date_to}` : 'full history';
-
-  log(`Starting full pipeline (${rangeLabel})…`, 'info');
-  setPipelineRunning(true);
-  showProgress(true);
-
-  let currentTariffHash = '';
+  const range = getDateRange();
+  const label = range.date_from && range.date_to
+    ? `Full pipeline (${range.date_from} → ${range.date_to})`
+    : 'Full pipeline';
+  log(`Starting ${label}…`, 'info'); disableButtons(true);
   try {
-    const cfg = await (await fetch(`${API}/api/config`)).json();
-    if (cfg.success) currentTariffHash = _tariffHash(cfg.config?.tariffs || []);
-  } catch {}
-
-  try {
-    _setStep('step-ingest', 'active', rangeLabel);
-    const fetchPromise = fetch(`${API}/run`, {
+    const r = await fetch(`${API}/run`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(range),
     });
-
-    setTimeout(() => { _setStep('step-ingest', 'done'); _setStep('step-aggregate', 'active'); }, 1200);
-    setTimeout(() => { _setStep('step-aggregate', 'done'); _setStep('step-simulate', 'active'); }, 2400);
-
-    const d = await (await fetchPromise).json();
+    const d = await r.json();
     if (!d.success) throw new Error(d.error);
-
-    _setStep('step-ingest',    'done');
-    _setStep('step-aggregate', 'done');
-    _setStep('step-simulate',  'done');
-    _setStep('step-done',      'done');
-    document.getElementById('pipeline-progress').querySelector('h3').textContent = 'Pipeline complete ✓';
-
     log(`✓ Pipeline complete — ${d.comparison?.length} tariff(s)`, 'ok');
-    _onResultsReady(d, currentTariffHash);
-    setTimeout(() => showProgress(false), 2000);
-
-  } catch(e) {
-    _setStep('step-ingest',    'error');
-    _setStep('step-aggregate', 'error');
-    _setStep('step-simulate',  'error');
-    document.getElementById('pipeline-progress').querySelector('h3').textContent = 'Pipeline failed';
-    log(`✗ Pipeline failed: ${e.message}`, 'err');
-    setTimeout(() => showProgress(false), 3000);
-  } finally {
-    setPipelineRunning(false);
-  }
+    renderComparison(d); showResultMeta(d);
+  } catch(e) { log(`✗ Pipeline failed: ${e.message}`, 'err'); }
+  finally { disableButtons(false); }
 }
 
-function _onResultsReady(d, tariffHash = null) {
-  renderComparison(d);
-  _sessionSave(d);
-  if (tariffHash) {
-    _sessionSaveTariffHash(tariffHash);
-    document.getElementById('stale-banner').style.display = 'none';
-  }
-  _showSavedAt(d.saved_at || new Date().toISOString());
+function showResultMeta(d) {
+  const dt = new Date(d.saved_at || new Date().toISOString());
+  document.getElementById('saved-at-label').textContent =
+    `Last run: ${dt.toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'})} at ${dt.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'})}`;
   document.getElementById('clear-btn').style.display = '';
-}
-
-// ── Per-tariff breakdown card ─────────────────────────────────────────────
-
-function gbp(pence)  { return `£${(pence / 100).toFixed(2)}`; }
-function kwh(v, dp=3){ return `${Number(v).toFixed(dp)} kWh`; }
-function p(v)        { return `${Number(v).toFixed(2)}p/kWh`; }
-
-function renderTariffCard(t) {
-  const isDayNight = t.tariff_type === 'day_night';
-  const typeLabel  = isDayNight ? 'Day / Night' : 'Fixed Rate';
-  let rows = '';
-
-  if (isDayNight) {
-    const nightWindow = `${t.night_start || '00:00'} – ${t.night_end || '07:00'}`;
-    rows += `
-      <tr>
-        <td class="row-label">☀️ Import kWh <span class="rate-badge tag-day">${p(t.day_rate_p)}</span></td>
-        <td class="row-value day">${kwh(t.day_import_kwh)}</td>
-      </tr>
-      <tr>
-        <td class="row-label">🌙 Import kWh <span class="rate-badge tag-night">${p(t.night_rate_p)}</span> · ${nightWindow}</td>
-        <td class="row-value night">${kwh(t.night_import_kwh)}</td>
-      </tr>
-      <tr>
-        <td class="row-label">☀️ Import cost</td>
-        <td class="row-value day">${gbp(t.day_import_cost_p)}</td>
-      </tr>
-      <tr>
-        <td class="row-label">🌙 Import cost</td>
-        <td class="row-value night">${gbp(t.night_import_cost_p)}</td>
-      </tr>`;
-  } else {
-    rows += `
-      <tr>
-        <td class="row-label">Import kWh <span class="rate-badge" style="background:rgba(79,142,247,.12);color:var(--accent);border:1px solid rgba(79,142,247,.2)">${p(t.flat_rate_p)}</span></td>
-        <td class="row-value">${kwh(t.total_import_kwh)}</td>
-      </tr>
-      <tr>
-        <td class="row-label">Import cost</td>
-        <td class="row-value">${gbp(t.total_import_cost_p)}</td>
-      </tr>`;
-  }
-
-  rows += `
-    <tr class="section-divider">
-      <td class="row-label">Export kWh <span class="rate-badge" style="background:#064e3b;color:var(--accent2);border:1px solid #065f46">${p(t.export_rate_p)}</span></td>
-      <td class="row-value credit">− ${kwh(t.total_export_kwh)}</td>
-    </tr>
-    <tr>
-      <td class="row-label">Export credit</td>
-      <td class="row-value credit">− ${gbp(t.total_export_credit_p)}</td>
-    </tr>
-    <tr class="section-divider">
-      <td class="row-label">Standing charge <span class="rate-badge" style="background:rgba(136,146,170,.1);color:var(--muted);border:1px solid var(--border)">${Number(t.standing_charge_p).toFixed(2)}p/day</span></td>
-      <td class="row-value">${gbp(t.total_standing_p)}</td>
-    </tr>
-    <tr class="total-row section-divider">
-      <td class="row-label" style="color:var(--text);font-weight:700">Net cost</td>
-      <td class="row-value">£${Number(t.total_net_cost_gbp).toFixed(2)}</td>
-    </tr>`;
-
-  return `
-    <div class="tariff-card">
-      <div class="tariff-card-header">
-        <span class="name">${t.tariff_name}</span>
-        <span class="type-badge">${typeLabel}</span>
-      </div>
-      <table class="breakdown-table"><tbody>${rows}</tbody></table>
-    </div>`;
 }
 
 // ── Comparison render ─────────────────────────────────────────────────────
@@ -674,15 +428,12 @@ function renderComparison(data) {
   if (!comparison?.length) return;
 
   const sel = document.getElementById('tariff-select');
-  const previousValue = sel.value;
-  sel.innerHTML = '<option value="">— select tariff —</option>' +
-    comparison.map(t => `<option value="${t.tariff_id}">${t.tariff_name}</option>`).join('');
-  sel.value = comparison.some(t => t.tariff_id === previousValue) ? previousValue : '';
+  sel.innerHTML = comparison.map(t => `<option value="${t.tariff_id}">${t.tariff_name}</option>`).join('');
 
-  const baseline  = comparison.find(t => t.tariff_id === baseline_id) || comparison[0];
-  const others    = comparison.filter(t => t.tariff_id !== baseline_id);
-  const sorted    = [baseline, ...others.sort((a, b) => a.total_net_cost_gbp - b.total_net_cost_gbp)];
-  const cheapest  = [...comparison].sort((a, b) => a.total_net_cost_gbp - b.total_net_cost_gbp)[0];
+  const baseline = comparison.find(t => t.tariff_id === baseline_id) || comparison[0];
+  const others   = comparison.filter(t => t.tariff_id !== baseline_id);
+  const sorted   = [baseline, ...others.sort((a, b) => a.total_net_cost_gbp - b.total_net_cost_gbp)];
+  const cheapest = [...comparison].sort((a, b) => a.total_net_cost_gbp - b.total_net_cost_gbp)[0];
   const maxSaving = others.length ? Math.min(...others.map(t => t.diff_vs_baseline_gbp)) : null;
 
   const rows = sorted.map(t => {
@@ -701,8 +452,6 @@ function renderComparison(data) {
       <td>${diffStr}</td>
     </tr>`;
   }).join('');
-
-  const tariffCards = sorted.map(t => renderTariffCard(t)).join('');
 
   document.getElementById('compare-content').innerHTML = `
     <div class="summary-grid" style="margin-bottom:20px">
@@ -730,9 +479,7 @@ function renderComparison(data) {
     <table>
       <thead><tr><th>Tariff</th><th>Net Cost</th><th>Import</th><th>Export</th><th>Standing</th><th>vs Current</th></tr></thead>
       <tbody>${rows}</tbody>
-    </table>
-    <h3 style="font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:24px 0 12px">Cost Breakdown per Tariff</h3>
-    <div class="tariff-cards">${tariffCards}</div>`;
+    </table>`;
 }
 
 // ── Detail breakdown ──────────────────────────────────────────────────────
@@ -740,15 +487,10 @@ function renderComparison(data) {
 async function loadDetail() {
   const tariff = document.getElementById('tariff-select').value;
   const view   = document.getElementById('view-select').value;
-
-  if (!tariff) {
-    document.getElementById('detail-content').innerHTML =
-      '<span style="color:var(--muted)">Select a tariff above.</span>';
-    return;
-  }
+  if (!tariff) return;
 
   document.getElementById('detail-content').innerHTML =
-    '<span style="color:var(--muted)"><span style="display:inline-block;width:13px;height:13px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .65s linear infinite;vertical-align:middle;margin-right:6px"></span>Loading…</span>';
+    '<span style="color:var(--muted)"><span id="spinner"></span>Loading…</span>';
 
   try {
     const d = await (await fetch(`${API}/results/${view}?tariff=${tariff}`)).json();
@@ -789,12 +531,13 @@ async function loadDetail() {
         </tr>`;
       }).join('');
 
-    } else {
+    } else { // yearly
       colHeader = 'Year';
       rows = records.map(r => {
         const dt = new Date(r.year + 'T00:00:00');
+        const label = dt.getFullYear();
         return `<tr>
-          <td>${dt.getFullYear()}</td>
+          <td>${label}</td>
           <td>${(r.import_kwh??0).toFixed(1)}</td>
           <td>${(r.export_kwh??0).toFixed(1)}</td>
           <td>${((r.import_cost_p??0)/100).toFixed(2)}</td>
@@ -815,14 +558,16 @@ async function loadDetail() {
         <tbody>${rows}</tbody>
       </table>`;
   } catch(e) {
-    document.getElementById('detail-content').innerHTML = `<span style="color:var(--danger)">Error: ${e.message}</span>`;
+    document.getElementById('detail-content').innerHTML = `<span class="err">Error: ${e.message}</span>`;
   }
 }
+
+function disableButtons(state) { document.querySelectorAll('button').forEach(b => b.disabled = state); }
 
 // ── Init ──────────────────────────────────────────────────────────────────
 
 initDateRange();
-checkHealth();
+checkHealth();           // triggers version check on first response
 loadSavedResults();
 setInterval(checkHealth, 30000);
 </script>
