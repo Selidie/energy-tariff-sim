@@ -6,8 +6,8 @@ services:
     ports:
       - "5011:5011"
     volumes:
-      - /mnt/container-data/energy-tariff-sim/data:/app/data
-      - /mnt/container-data/energy-tariff-sim/config:/app/config
+      - ./energy-tarriff-sim/data:/app/data
+      - ./energy-tarriff-sim/config:/app/config
     environment:
       - PORT=5011
       - CONFIG_PATH=/app/config/settings.yaml

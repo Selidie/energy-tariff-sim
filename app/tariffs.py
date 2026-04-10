@@ -51,14 +51,25 @@ class DayNightTariff(BaseTariff):
         super().__init__(cfg)
         day   = cfg['day']
         night = cfg['night']
-        self._day_rate   = float(day['rate'])
-        self._night_rate = float(night['rate'])
+        self._day_rate    = float(day['rate'])
+        self._night_rate  = float(night['rate'])
         self._night_start = _parse_time(night['start'])
         self._night_end   = _parse_time(night['end'])
 
+    def _in_night_period(self, dt) -> bool:
+        """Return True if the given datetime falls in the night-rate window."""
+        if hasattr(dt, 'time'):
+            t = dt.time()
+        elif isinstance(dt, time):
+            t = dt
+        else:
+            t = dt
+        return _in_night(t, self._night_start, self._night_end)
+
     def import_rate(self, dt) -> float:
-        t = dt.astimezone().time() if hasattr(dt, 'astimezone') else dt
-        if _in_night(t, self._night_start, self._night_end):
+        # The index is already in the configured local timezone from ingest,
+        # so just extract the wall-clock time directly — no conversion needed.
+        if self._in_night_period(dt):
             return self._night_rate
         return self._day_rate
 
@@ -72,7 +83,7 @@ def _in_night(t: time, start: time, end: time) -> bool:
     """Return True if t is within [start, end) — handles midnight wrap."""
     if start <= end:
         return start <= t < end
-    # wraps midnight (e.g. 23:00 – 07:00)
+    # wraps midnight (e.g. 00:00 – 07:00)
     return t >= start or t < end
 
 
