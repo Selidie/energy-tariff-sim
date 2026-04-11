@@ -1,0 +1,41 @@
+mqtt:
+  api_url: http://mqtt-bridge-dev:5003
+  topics:
+    grid_power: total/grid_power/state
+storage:
+  raw_path: /app/data/raw/
+  aggregated_path: /app/data/aggregated/
+  results_path: /app/data/results.json
+simulation:
+  timezone: Europe/London
+  interval_minutes: 30
+  history_range: 700d
+  history_window: 1m
+  baseline_tariff_id: flat_standard
+tariffs:
+- id: flat_standard
+  name: Example Tarrif One
+  type: day_night
+  standing_charge: 56.89
+  export_rate: 16.5
+  day:
+    rate: 21.8
+    start: 07:00
+    end: 00:00
+  night:
+    rate: 6.7
+    start: 00:00
+    end: 07:00
+- id: economy7
+  name: Example Tarrif Two
+  type: day_night
+  standing_charge: 60.0
+  export_rate: 9.0
+  day:
+    rate: 28.44
+    start: 06:00
+    end: 00:00
+  night:
+    rate: 9.0
+    start: 00:00
+    end: 06:00

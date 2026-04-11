@@ -8,3 +8,4 @@ __pycache__/
 *.parquet
 .DS_Store
 *.log
+settings.yaml
