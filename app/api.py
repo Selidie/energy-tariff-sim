@@ -28,6 +28,9 @@ _SETTINGS_PATH = os.environ.get(
     os.path.join(os.path.dirname(__file__), '..', 'config', 'settings.yaml')
 )
 
+# Version baked in at Docker build time via ARG GIT_VERSION → ENV APP_VERSION
+APP_VERSION = os.environ.get('APP_VERSION', 'dev')
+
 try:
     _cfg     = cfg_module.load(_SETTINGS_PATH)
     _tariffs = load_tariffs(_cfg)
@@ -116,6 +119,7 @@ def health():
         bridge = {'ok': False, 'reason': str(e)}
     return jsonify({
         'status':             'ok',
+        'version':            APP_VERSION,
         'tariffs':            [t.id for t in _tariffs],
         'baseline_tariff_id': _baseline_id(),
         'timezone':           _tz(),
@@ -237,7 +241,8 @@ def bridge_topics():
 def bridge_topics_numeric():
     try:
         api_url = _cfg['mqtt']['api_url'].rstrip('/')
-        data = requests.get(f'{api_url}/topics/numeric', timeout=10).json()
+        data = requests.get(f'{api_url}/topics/numeric', timeout=10).json()\
+
         return jsonify({'success': True, 'topics': data.get('topics', []),
                         'configured_topics': _cfg['mqtt'].get('topics', {})})
     except requests.exceptions.ConnectionError as e:

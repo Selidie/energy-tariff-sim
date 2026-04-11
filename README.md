@@ -35,33 +35,6 @@ Only **`grid_power`** is required. Positive values = import from grid; negative 
 
 ---
 
-## Quick start (local / dev)
-
-```bash
-pip install -r requirements.txt
-python -m app.api
-# Open http://localhost:5011
-```
-
-**Requires:** mqtt-bridge running on port 5003 with InfluxDB enabled.
-
-## Docker
-
-```bash
-docker compose up -d energy-tariff-sim
-```
-
-Data and config are volume-mounted and persist across rebuilds:
-
-```
-./energy-tarriff-sim/data/   → /app/data
-./energy-tarriff-sim/config/ → /app/config
-```
-
-Port **5011** is exposed on the host.
-
----
-
 ## Configuration — `config/settings.yaml`
 
 Settings can be edited directly in the file or via the **Config UI** at `http://localhost:5011/config`.
@@ -201,6 +174,79 @@ Results are cleared by `DELETE /api/results` or by running a new simulation.
 
 ---
 
+## Running with Docker
+
+### Build and run manually
+
+```bash
+docker build \
+  --build-arg GIT_VERSION=$(git rev-list --count HEAD).$(git rev-parse --short HEAD) \
+  --build-arg BUILD_TIME=$(date +%H:%M) \
+  -t energy-tariff-sim .
+
+docker run -d \
+  --name energy-tariff-sim \
+  --env-file .env \
+  -p 5011:5011 \
+  -v ./data:/app/data \
+  -v ./config:/app/config \
+  --network <your_network> \
+  energy-tariff-sim
+```
+
+### Docker Compose (recommended)
+
+See the root [`docker-compose.yml`](../docker-compose.yml) for the full stack.
+
+Single-service snippet:
+
+```yaml
+services:
+  energy-tariff-sim:
+    image: ghcr.io/selidie/energy-tariff-sim:latest
+    container_name: energy-tariff-sim
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "5011:5011"
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    networks:
+      - home-stack
+    depends_on:
+      - mqtt-bridge
+```
+
+---
+
+## Development
+
+### Requirements
+
+- Python 3.11+
+- Flask, pandas, pyarrow, pyyaml, requests
+
+```bash
+pip install -r requirements.txt
+python -m app.api
+# Open http://localhost:5011
+```
+
+**Requires:** mqtt-bridge running on port 5003 with InfluxDB enabled.
+
+The dev rebuild script handles versioning, networking, and host-gateway setup automatically:
+
+```bash
+# From the workspace root
+./dev-rebuild.sh energy-tariff-sim
+
+# Full clean rebuild
+./dev-rebuild.sh energy-tariff-sim --no-cache
+```
+
+---
+
 ## File layout
 
 ```
@@ -261,7 +307,7 @@ python3 sa_import.py /path/to/backup.zip
 ## Dependencies
 
 | Package | Purpose |
-|---------|---------|
+|---------|---------| 
 | `flask >= 3.0` | REST API and HTML page serving |
 | `flask-cors` | CORS headers for local dev |
 | `pandas >= 2.0` | Data manipulation and resampling |

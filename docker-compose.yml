@@ -1,21 +1,31 @@
+# docker-compose.yml — energy-tariff-sim (production)
+#
+# Pulls the published image from GitHub Container Registry and runs the
+# energy tariff simulator as a standalone service.
+#
+# Prerequisites:
+#   - Docker and Docker Compose installed
+#   - An mqtt-bridge instance running with InfluxDB enabled
+#     (see https://github.com/selidie/mqtt-bridge)
+#   - Update config/settings.yaml with your mqtt-bridge URL and tariffs
+#     before starting for the first time
+#
+# Usage:
+#   docker compose pull          # pull the latest image
+#   docker compose up -d         # start the service
+#   docker compose logs -f       # tail logs
+#   docker compose down          # stop and remove the container
+
 services:
   energy-tariff-sim:
-    build: ./energy-tarriff-sim
+    image: ghcr.io/selidie/energy-tarriff-sim:latest
     container_name: energy-tariff-sim
     restart: unless-stopped
     ports:
       - "5011:5011"
     volumes:
-      - ./energy-tarriff-sim/data:/app/data
-      - ./energy-tarriff-sim/config:/app/config
+      - ./data:/app/data
+      - ./config:/app/config
     environment:
       - PORT=5011
       - CONFIG_PATH=/app/config/settings.yaml
-    depends_on:
-      - mqtt-bridge
-    networks:
-      - frontend
-
-networks:
-  frontend:
-    external: true
