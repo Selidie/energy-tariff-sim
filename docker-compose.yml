@@ -18,7 +18,7 @@
 
 services:
   energy-tariff-sim:
-    image: ghcr.io/selidie/energy-tarriff-sim:latest
+    image: ghcr.io/selidie/energy-tariff-sim:latest
     container_name: energy-tariff-sim
     restart: unless-stopped
     ports:

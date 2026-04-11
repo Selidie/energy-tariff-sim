@@ -1,7 +1,10 @@
 mqtt:
   api_url: http://mqtt-bridge-dev:5003
   topics:
-    grid_power: total/grid_power/state
+    grid_power: inverter_1/grid_power/state
+    pv_power: inverter_1/pv_power/state
+    battery_power: total/battery_power/state
+    load_power: inverter_1/load_power/state
 storage:
   raw_path: /app/data/raw/
   aggregated_path: /app/data/aggregated/

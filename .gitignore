@@ -8,4 +8,6 @@ __pycache__/
 *.parquet
 .DS_Store
 *.log
-settings.yaml
+
+# Local config — use config/settings.yaml.example as the template
+config/settings.yaml
