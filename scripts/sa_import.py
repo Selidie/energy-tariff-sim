@@ -61,6 +61,17 @@ V1_IMAGE         = 'influxdb:1.8'
 STAGING_MOUNT    = '/tmp/sa_backup'
 V1_INTERNAL_PORT = 8086
 
+# Resource limits for the temporary InfluxDB 1.x sidecar container.
+# Capped to 1 CPU and 2 GB RAM so the import can never starve the host,
+# regardless of how many cores or how much memory the deployment has.
+# The import will take longer but remain stable on constrained homelabs.
+V1_CPU_LIMIT    = '1'
+V1_MEMORY_LIMIT = '2g'
+
+# Rows fetched per paginated query from InfluxDB 1.x.
+# Smaller pages mean less memory pressure inside the sidecar at any one time.
+V1_PAGE_SIZE = 10000
+
 DEFAULT_DOCKER_NETWORK        = os.environ.get('DOCKER_NETWORK', 'frontend')
 DEFAULT_STAGING_CONTAINER_DIR = os.environ.get('STAGING_CONTAINER_DIR', '/app/data/sa_staging')
 
@@ -136,7 +147,6 @@ def resolve_host_path(container_path: str) -> str:
       - docker inspect fails (e.g. running outside Docker, unit tests)
       - no matching mount is found (path is in an un-mounted layer)
     """
-    # The container's short hostname is its container ID by default.
     self_id = socket.gethostname()
     try:
         result = subprocess.run(
@@ -153,12 +163,10 @@ def resolve_host_path(container_path: str) -> str:
 
         mounts = info[0].get('Mounts', [])
 
-        # Find the longest matching destination prefix (most specific mount wins)
         best_dest   = ''
         best_source = ''
         for m in mounts:
-            dest = m.get('Destination', '')
-            # Normalise: ensure dest ends without slash for prefix matching
+            dest      = m.get('Destination', '')
             dest_norm = dest.rstrip('/')
             if container_path == dest_norm or container_path.startswith(dest_norm + '/'):
                 if len(dest_norm) > len(best_dest):
@@ -173,8 +181,7 @@ def resolve_host_path(container_path: str) -> str:
             )
             return container_path
 
-        # Re-root: replace the container-side mount destination with the host source
-        relative = container_path[len(best_dest):]   # e.g. '/sa_staging'
+        relative  = container_path[len(best_dest):]
         host_path = best_source + relative
         log.info('Resolved host path: %s → %s  (via mount %s → %s)',
                  container_path, host_path, best_dest, best_source)
@@ -233,18 +240,29 @@ def extract_backup_to_staging(backup_path: str, staging_container_dir: str) -> N
 # ---------------------------------------------------------------------------
 
 def start_v1_container(staging_host_dir: str, docker_network: str) -> str:
+    """
+    Start a temporary InfluxDB 1.x container with explicit resource limits.
+
+    CPU and memory are capped (V1_CPU_LIMIT / V1_MEMORY_LIMIT) so the sidecar
+    cannot starve the host regardless of deployment size.  The import will run
+    slower on constrained hardware but will remain stable and won't lock up
+    other services sharing the same VM or node.
+    """
     subprocess.run(['docker', 'rm', '-f', CONTAINER_NAME], capture_output=True)
     log.info('Pulling InfluxDB 1.8 image (if not cached)...')
     subprocess.run(['docker', 'pull', V1_IMAGE], check=True)
     cmd = [
         'docker', 'run', '-d',
-        '--name', CONTAINER_NAME,
+        '--name',    CONTAINER_NAME,
         '--network', docker_network,
+        '--cpus',    V1_CPU_LIMIT,
+        '--memory',  V1_MEMORY_LIMIT,
         '-v', f'{staging_host_dir}:{STAGING_MOUNT}:ro',
         '-e', 'INFLUXDB_HTTP_AUTH_ENABLED=false',
         V1_IMAGE
     ]
-    log.info('Starting InfluxDB 1.x container on network %s...', docker_network)
+    log.info('Starting InfluxDB 1.x container on network %s (cpus=%s memory=%s)...',
+             docker_network, V1_CPU_LIMIT, V1_MEMORY_LIMIT)
     log.info('Bind-mount: %s → %s', staging_host_dir, STAGING_MOUNT)
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     container_id = result.stdout.strip()
@@ -398,7 +416,15 @@ def inspect_measurements():
 # ---------------------------------------------------------------------------
 
 def stream_v1_measurement(measurement: str, field: str,
-                           range_start=None, range_end=None, page_size: int = 50000):
+                           range_start=None, range_end=None):
+    """
+    Generator yielding (timestamp_ns, float_value) for the given measurement.
+
+    Uses LIMIT/OFFSET pagination with V1_PAGE_SIZE rows per request to keep
+    memory pressure inside the sidecar low and predictable.  Smaller pages
+    mean more round-trips but far less peak RAM usage, which is the right
+    trade-off for constrained homelab deployments.
+    """
     conditions = []
     if range_start:
         conditions.append(f"time >= '{range_start.strftime('%Y-%m-%dT%H:%M:%SZ')}'")
@@ -408,7 +434,7 @@ def stream_v1_measurement(measurement: str, field: str,
     offset = 0
     while True:
         query = (f'SELECT "{field}" FROM "{measurement}"{where} '
-                 f'ORDER BY time ASC LIMIT {page_size} OFFSET {offset}')
+                 f'ORDER BY time ASC LIMIT {V1_PAGE_SIZE} OFFSET {offset}')
         params = {'db': SA_DB_NAME, 'q': query, 'epoch': 'ns'}
         url = f'{_v1_base_url()}/query?' + urllib.parse.urlencode(params)
         with urllib.request.urlopen(url, timeout=120) as resp:
@@ -432,9 +458,9 @@ def stream_v1_measurement(measurement: str, field: str,
                     yield ts_ns, float(val)
                 except (ValueError, TypeError):
                     continue
-        if rows_this_page < page_size:
+        if rows_this_page < V1_PAGE_SIZE:
             break
-        offset += page_size
+        offset += V1_PAGE_SIZE
 
 
 # ---------------------------------------------------------------------------
@@ -464,7 +490,7 @@ def run_import(prefix, range_start, range_end, dry_run, batch_size, write_pause,
 
     measurements = get_measurements()
     log.info('Found %d measurements to import', len(measurements))
-    log.info('Batch size: %d  Write pause: %.2fs', batch_size, write_pause)
+    log.info('Batch size: %d  Write pause: %.2fs  Page size: %d', batch_size, write_pause, V1_PAGE_SIZE)
 
     total = skipped = written = failed_points = preview = 0
     batch = []
@@ -553,8 +579,6 @@ def main():
     range_start = datetime.fromisoformat(args.range_start).replace(tzinfo=timezone.utc) if args.range_start else None
     range_end   = datetime.fromisoformat(args.range_end).replace(tzinfo=timezone.utc)   if args.range_end   else None
 
-    # Resolve the host-side staging path automatically from our own container's
-    # mount table.  STAGING_HOST_DIR env var can override this if needed.
     staging_host_dir = get_staging_host_dir(args.staging_container_dir)
 
     write_api = None
