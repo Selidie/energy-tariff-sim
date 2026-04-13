@@ -26,7 +26,10 @@ Environment variables:
   INFLUX_BUCKET          InfluxDB 2.x bucket       (default: solar)
   DOCKER_NETWORK         Docker network (default: frontend; dev uses dev-network)
   STAGING_CONTAINER_DIR  Path inside this container for staging files
-  STAGING_HOST_DIR       Corresponding host path for Docker bind-mount
+                         (default: /app/data/sa_staging)
+  STAGING_HOST_DIR       Override: corresponding host path for Docker bind-mount.
+                         If unset, auto-resolved at runtime by inspecting this
+                         container's own mounts via `docker inspect`.
 """
 
 import os
@@ -34,6 +37,7 @@ import sys
 import time
 import json
 import shutil
+import socket
 import zipfile
 import argparse
 import logging
@@ -59,7 +63,6 @@ V1_INTERNAL_PORT = 8086
 
 DEFAULT_DOCKER_NETWORK        = os.environ.get('DOCKER_NETWORK', 'frontend')
 DEFAULT_STAGING_CONTAINER_DIR = os.environ.get('STAGING_CONTAINER_DIR', '/app/data/sa_staging')
-DEFAULT_STAGING_HOST_DIR      = os.environ.get('STAGING_HOST_DIR', DEFAULT_STAGING_CONTAINER_DIR)
 
 WRITE_TIMEOUT_SECS = 60
 WRITE_RETRIES      = 3
@@ -106,6 +109,102 @@ MEASUREMENT_MAP = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Host-path resolution
+# ---------------------------------------------------------------------------
+
+def resolve_host_path(container_path: str) -> str:
+    """
+    Translate a path that exists inside this container into the equivalent
+    path on the Docker host by inspecting our own container's mount table.
+
+    This is needed because sa_import.py spins up a sibling InfluxDB 1.x
+    container via the Docker socket — a Docker-out-of-Docker pattern.  The
+    bind-mount source passed to `docker run -v` must be a HOST path, not a
+    path inside this container's filesystem.  Since the host layout varies
+    across deployments (dev, staging, production), we resolve it dynamically
+    rather than hard-coding or requiring an env var.
+
+    Strategy:
+      1. Use the container's hostname (== short container ID by default) to
+         look up our own container via `docker inspect`.
+      2. Walk the Mounts list to find the entry whose `Destination` is a
+         prefix of `container_path`.
+      3. Re-root the path under the mount's `Source` (host path).
+
+    Falls back to returning `container_path` unchanged if:
+      - docker inspect fails (e.g. running outside Docker, unit tests)
+      - no matching mount is found (path is in an un-mounted layer)
+    """
+    # The container's short hostname is its container ID by default.
+    self_id = socket.gethostname()
+    try:
+        result = subprocess.run(
+            ['docker', 'inspect', self_id],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            log.debug('docker inspect returned %d — cannot resolve host path', result.returncode)
+            return container_path
+
+        info = json.loads(result.stdout)
+        if not info:
+            return container_path
+
+        mounts = info[0].get('Mounts', [])
+
+        # Find the longest matching destination prefix (most specific mount wins)
+        best_dest   = ''
+        best_source = ''
+        for m in mounts:
+            dest = m.get('Destination', '')
+            # Normalise: ensure dest ends without slash for prefix matching
+            dest_norm = dest.rstrip('/')
+            if container_path == dest_norm or container_path.startswith(dest_norm + '/'):
+                if len(dest_norm) > len(best_dest):
+                    best_dest   = dest_norm
+                    best_source = m.get('Source', '').rstrip('/')
+
+        if not best_dest:
+            log.warning(
+                'No mount found covering container path %s — '
+                'using container path as-is (may fail if Docker socket is host-mounted)',
+                container_path
+            )
+            return container_path
+
+        # Re-root: replace the container-side mount destination with the host source
+        relative = container_path[len(best_dest):]   # e.g. '/sa_staging'
+        host_path = best_source + relative
+        log.info('Resolved host path: %s → %s  (via mount %s → %s)',
+                 container_path, host_path, best_dest, best_source)
+        return host_path
+
+    except Exception as e:
+        log.warning('Could not resolve host path for %s: %s — using as-is', container_path, e)
+        return container_path
+
+
+def get_staging_host_dir(staging_container_dir: str) -> str:
+    """
+    Return the host-side path for the staging directory.
+
+    Priority:
+      1. STAGING_HOST_DIR env var (explicit override — useful for testing or
+         unusual mount configurations)
+      2. Auto-resolved via docker inspect of this container's own mounts
+    """
+    override = os.environ.get('STAGING_HOST_DIR', '').strip()
+    if override:
+        log.info('Using STAGING_HOST_DIR override: %s', override)
+        return override
+    return resolve_host_path(staging_container_dir)
+
+
+# ---------------------------------------------------------------------------
+# Backup extraction
+# ---------------------------------------------------------------------------
+
 def extract_backup_to_staging(backup_path: str, staging_container_dir: str) -> None:
     if os.path.exists(staging_container_dir):
         shutil.rmtree(staging_container_dir)
@@ -129,6 +228,10 @@ def extract_backup_to_staging(backup_path: str, staging_container_dir: str) -> N
     log.info('Staged: %s', ', '.join(f'{v} .{k}' for k, v in sorted(counts.items())))
 
 
+# ---------------------------------------------------------------------------
+# InfluxDB 1.x sidecar container
+# ---------------------------------------------------------------------------
+
 def start_v1_container(staging_host_dir: str, docker_network: str) -> str:
     subprocess.run(['docker', 'rm', '-f', CONTAINER_NAME], capture_output=True)
     log.info('Pulling InfluxDB 1.8 image (if not cached)...')
@@ -142,6 +245,7 @@ def start_v1_container(staging_host_dir: str, docker_network: str) -> str:
         V1_IMAGE
     ]
     log.info('Starting InfluxDB 1.x container on network %s...', docker_network)
+    log.info('Bind-mount: %s → %s', staging_host_dir, STAGING_MOUNT)
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     container_id = result.stdout.strip()
     log.info('Container started: %s', container_id[:12])
@@ -214,6 +318,10 @@ def check_container_logs(lines: int = 10):
     log.info('--- Container logs (tail %d) ---\n%s%s', lines, result.stdout, result.stderr)
 
 
+# ---------------------------------------------------------------------------
+# InfluxDB 1.x queries
+# ---------------------------------------------------------------------------
+
 def v1_query(query: str, db: str = None, epoch: str = None) -> dict:
     params = {'q': query}
     if db:
@@ -285,6 +393,10 @@ def inspect_measurements():
     print('\n' + '='*70 + '\n')
 
 
+# ---------------------------------------------------------------------------
+# Data streaming
+# ---------------------------------------------------------------------------
+
 def stream_v1_measurement(measurement: str, field: str,
                            range_start=None, range_end=None, page_size: int = 50000):
     conditions = []
@@ -324,6 +436,10 @@ def stream_v1_measurement(measurement: str, field: str,
             break
         offset += page_size
 
+
+# ---------------------------------------------------------------------------
+# InfluxDB 2.x writes
+# ---------------------------------------------------------------------------
 
 def write_batch_with_retry(write_api, bucket: str, org: str, batch: list) -> bool:
     for attempt in range(1, WRITE_RETRIES + 1):
@@ -414,6 +530,10 @@ def run_import(prefix, range_start, range_end, dry_run, batch_size, write_pause,
     return total, skipped, written
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 def main():
     parser = argparse.ArgumentParser(description='Import Solar Assistant backup into InfluxDB 2.x')
     parser.add_argument('backup')
@@ -427,12 +547,15 @@ def main():
                         help='Seconds to pause between batches (default: 0.0)')
     parser.add_argument('--docker-network',        default=DEFAULT_DOCKER_NETWORK)
     parser.add_argument('--staging-container-dir', default=DEFAULT_STAGING_CONTAINER_DIR)
-    parser.add_argument('--staging-host-dir',      default=DEFAULT_STAGING_HOST_DIR)
     parser.add_argument('--keep-container',        action='store_true')
     args = parser.parse_args()
 
     range_start = datetime.fromisoformat(args.range_start).replace(tzinfo=timezone.utc) if args.range_start else None
     range_end   = datetime.fromisoformat(args.range_end).replace(tzinfo=timezone.utc)   if args.range_end   else None
+
+    # Resolve the host-side staging path automatically from our own container's
+    # mount table.  STAGING_HOST_DIR env var can override this if needed.
+    staging_host_dir = get_staging_host_dir(args.staging_container_dir)
 
     write_api = None
     if not args.dry_run and not args.inspect:
@@ -457,7 +580,7 @@ def main():
     container_id = None
     try:
         extract_backup_to_staging(args.backup, args.staging_container_dir)
-        container_id = start_v1_container(args.staging_host_dir, args.docker_network)
+        container_id = start_v1_container(staging_host_dir, args.docker_network)
         wait_for_v1()
         run_restore()
         check_container_logs(10)
