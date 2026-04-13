@@ -5,3 +5,4 @@ requests
 flask>=3.0
 flask-cors
 apscheduler
+influxdb-client
