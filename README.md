@@ -45,10 +45,12 @@ Settings can be edited directly in the file or via the **Config UI** at `http://
 mqtt:
   api_url: "http://mqtt-bridge:5003"
   topics:
-    grid_power: "total/grid_power/state"   # required — W, +import / -export
+    grid_power: "inverter_1/grid_power/state"   # required — W, +import / -export
 ```
 
 Only `grid_power` is required. The mqtt-bridge prefix (e.g. `solar_assistant`) is resolved automatically by the bridge.
+
+Topic names must match **exactly** what the live mqtt-bridge records in InfluxDB. The bridge strips the MQTT prefix (e.g. `solar_assistant/`) and stores the remainder as the `topic` tag. Solar Assistant publishes per-inverter readings on `inverter_1/...` topics, so both live data and historical imports must use the same names.
 
 ### Storage
 
@@ -130,6 +132,21 @@ Changes are saved back to `config/settings.yaml` and take effect immediately —
 
 ---
 
+## Solar Assistant Backup Import
+
+If you have a Solar Assistant backup and want to backfill InfluxDB with historical data, use the **Config UI** import panel at `http://localhost:5011/config`. Upload your backup `.zip`, optionally set a start date, and click **Start Import**.
+
+> ⚠️ Imports can take several hours depending on data volume. A typical Solar Assistant installation logging at 10-second intervals generates approximately:
+> - **1 day** → ~285,000 data points
+> - **1 month** → ~8,500,000 data points
+> - **1 year** → ~102,000,000 data points
+
+For command-line usage, see **[scripts/README.md](scripts/README.md)**.
+
+Topic names written by the import match the live mqtt-bridge schema (`inverter_1/grid_power/state` etc.) so historical and live data coexist seamlessly in InfluxDB.
+
+---
+
 ## API endpoints
 
 | Method | Endpoint | Description |
@@ -153,6 +170,10 @@ Changes are saved back to `config/settings.yaml` and take effect immediately —
 | GET | `/api/bridge/topics` | All topics seen by mqtt-bridge |
 | GET | `/api/bridge/topics/numeric` | Numeric topics only |
 | GET | `/api/bridge/diagnose` | Full bridge diagnostic — MQTT status, InfluxDB, topic mapping |
+| POST | `/api/sa-import/upload` | Upload a Solar Assistant backup `.zip` |
+| GET | `/api/sa-import/stream` | Start and stream the import process (SSE) |
+| GET | `/api/sa-import/status` | Poll import progress |
+| POST | `/api/sa-import/clear` | Clear the uploaded backup file |
 
 ### Date range on `/run` and `/ingest`
 
@@ -190,9 +211,12 @@ docker run -d \
   -p 5011:5011 \
   -v ./data:/app/data \
   -v ./config:/app/config \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   --network <your_network> \
   energy-tariff-sim
 ```
+
+> The Docker socket mount (`/var/run/docker.sock`) is required for the Solar Assistant import feature, which spins up a temporary InfluxDB 1.x container on the host.
 
 ### Docker Compose (recommended)
 
@@ -206,12 +230,17 @@ services:
     image: ghcr.io/selidie/energy-tariff-sim:latest
     container_name: energy-tariff-sim
     restart: unless-stopped
-    env_file: .env
     ports:
       - "5011:5011"
     volumes:
       - ./data:/app/data
       - ./config:/app/config
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=your_token
+      - INFLUX_ORG=home
+      - INFLUX_BUCKET=solar
     networks:
       - home-stack
     depends_on:
@@ -225,7 +254,7 @@ services:
 ### Requirements
 
 - Python 3.11+
-- Flask, pandas, pyarrow, pyyaml, requests
+- Flask, pandas, pyarrow, pyyaml, requests, influxdb-client
 
 ```bash
 pip install -r requirements.txt
@@ -279,41 +308,17 @@ energy-tariff-sim/
 
 ---
 
-## Solar Assistant historical data import
-
-If you have a Solar Assistant backup and want to backfill InfluxDB with historical data, use the scripts in `scripts/`. They handle the full InfluxDB 1.x → 2.x migration automatically.
-
-See **[scripts/README.md](scripts/README.md)** for the full workflow.
-
-Quick version:
-
-```bash
-cd scripts
-
-# 1. Inspect the backup first
-python3 sa_inspect.py /path/to/backup.zip
-
-# 2. Preview what would be imported
-python3 sa_import.py /path/to/backup.zip --dry-run
-
-# 3. Import
-INFLUX_URL=http://localhost:8086 \
-INFLUX_TOKEN=your_token \
-python3 sa_import.py /path/to/backup.zip
-```
-
----
-
 ## Dependencies
 
 | Package | Purpose |
-|---------|---------| 
+|---------|---------|
 | `flask >= 3.0` | REST API and HTML page serving |
 | `flask-cors` | CORS headers for local dev |
 | `pandas >= 2.0` | Data manipulation and resampling |
 | `pyarrow` | Parquet read/write |
 | `pyyaml` | Config file parsing and saving |
 | `requests` | HTTP calls to mqtt-bridge |
+| `influxdb-client` | InfluxDB 2.x writes for Solar Assistant import |
 | `apscheduler` | (available for scheduled runs) |
 
 ---
@@ -324,10 +329,16 @@ python3 sa_import.py /path/to/backup.zip
 Confirm mqtt-bridge is running and `mqtt.api_url` in `settings.yaml` resolves correctly. Inside Docker the service name (`mqtt-bridge`) is used; for local dev use `http://localhost:5003`.
 
 **No data returned from ingest**
-Run `GET /api/bridge/diagnose` to check MQTT connectivity, InfluxDB status, and whether the `grid_power` topic is being received. The bridge must have been running long enough to accumulate readings.
+Run `GET /api/bridge/diagnose` to check MQTT connectivity, InfluxDB status, and whether the `grid_power` topic is being received. The bridge must have been running long enough to accumulate readings in InfluxDB.
+
+**Import shows real kWh values but costs are zero / only standing charge**
+Check that the topic names in `settings.yaml` match exactly what the mqtt-bridge has recorded. Use `GET /api/bridge/diagnose` — it shows the configured topics and whether each one is found in the bridge. Topics must use `inverter_1/...` naming to match both live MQTT data and Solar Assistant historical imports.
 
 **Day/night rate boundaries look wrong**
 Check `simulation.timezone` in `settings.yaml` matches your local timezone (e.g. `Europe/London`). The simulator applies rate boundaries using wall-clock time in that timezone, so an incorrect timezone will shift night periods by the UTC offset.
+
+**Solar Assistant import completes but pipeline shows zero kWh**
+The import writes data using `inverter_1/...` topic names to match live mqtt-bridge data. If you previously ran an import with an older version of `sa_import.py` (which used `total/...` topics), those points are orphaned. Delete and recreate the InfluxDB `solar` bucket, then re-run the import.
 
 **Port conflict**
 The container uses port `5011`. Change the host-side port in `docker-compose.yml` if needed:

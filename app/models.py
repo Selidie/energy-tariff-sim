@@ -1,8 +1,2 @@
-from dataclasses import dataclass
-from datetime import datetime
-
-@dataclass
-class EnergyRecord:
-    timestamp: datetime
-    import_kwh: float
-    export_kwh: float
+# Superseded by app/tariffs.py (FlatTariff, DayNightTariff)
+# This file is retained only for git history purposes and is not used.

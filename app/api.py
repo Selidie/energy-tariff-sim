@@ -2,11 +2,20 @@
 import os
 import json
 import uuid
+import shutil
+import zipfile
+import tempfile
+import threading
+import subprocess
 import logging
+import queue
+import time
+import re
 import yaml
 import requests
+from collections import deque
 from datetime import datetime, timezone
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, Response, stream_with_context
 from flask_cors import CORS
 from app import config as cfg_module
 from app.ingest import run_ingest, load_raw, check_bridge
@@ -28,7 +37,6 @@ _SETTINGS_PATH = os.environ.get(
     os.path.join(os.path.dirname(__file__), '..', 'config', 'settings.yaml')
 )
 
-# Version baked in at Docker build time via ARG GIT_VERSION → ENV APP_VERSION
 APP_VERSION = os.environ.get('APP_VERSION', 'dev')
 
 try:
@@ -199,7 +207,6 @@ def save_config():
 
 
 def _slugify(name: str) -> str:
-    import re
     slug = re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')
     return slug or str(uuid.uuid4())[:8]
 
@@ -241,7 +248,7 @@ def bridge_topics():
 def bridge_topics_numeric():
     try:
         api_url = _cfg['mqtt']['api_url'].rstrip('/')
-        data = requests.get(f'{api_url}/topics/numeric', timeout=10).json()\
+        data = requests.get(f'{api_url}/topics/numeric', timeout=10).json()
 
         return jsonify({'success': True, 'topics': data.get('topics', []),
                         'configured_topics': _cfg['mqtt'].get('topics', {})})
@@ -444,6 +451,286 @@ def _get_tariff(tariff_id):
     if not tariff_id:
         return _tariffs[0] if _tariffs else None
     return next((t for t in _tariffs if t.id == tariff_id), None)
+
+
+# ── Solar Assistant Import API ─────────────────────────────────────────────
+
+_sa_import_lock    = threading.Lock()
+_sa_import_running = False
+
+_sa_import_state = {
+    'written':    0,
+    'skipped':    0,
+    'last_line':  '',
+    'done':       False,
+    'failed':     False,
+    'err_msg':    '',
+    'started_at': None,
+}
+
+_sa_import_log_buffer: deque = deque(maxlen=200)
+_sa_import_log_lock = threading.Lock()
+
+_SA_UPLOAD_DIR = '/tmp/sa_webui_upload'
+_SSE_KEEPALIVE_INTERVAL = 15
+
+
+def _sa_upload_path() -> str:
+    if not os.path.isdir(_SA_UPLOAD_DIR):
+        return None
+    zips = [f for f in os.listdir(_SA_UPLOAD_DIR) if f.endswith('.zip')]
+    return os.path.join(_SA_UPLOAD_DIR, zips[0]) if zips else None
+
+
+def _sa_probe_zip_dates(zip_path: str) -> dict:
+    """
+    Read the .manifest file(s) inside the zip and extract the earliest/latest
+    timestamps without spinning up Docker.
+
+    Only timestamps within a plausible range are accepted — Solar Assistant
+    didn't exist before 2018, and future dates are impossible.  This prevents
+    InfluxDB shard boundary artefacts (which can include epoch-zero or other
+    implausible dates) from polluting the date picker range shown to the user.
+    """
+    earliest = None
+    latest   = None
+    file_count = 0
+    total_bytes = 0
+
+    # Solar Assistant was first released in 2018; nothing earlier is real data.
+    _MIN_PLAUSIBLE = datetime(2018, 1, 1, tzinfo=timezone.utc)
+    _MAX_PLAUSIBLE = datetime.now(timezone.utc)
+
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            members = zf.namelist()
+            file_count = len(members)
+            for name in members:
+                info = zf.getinfo(name)
+                total_bytes += info.file_size
+
+            manifest_files = [m for m in members if m.endswith('.manifest')]
+            for mf in manifest_files:
+                try:
+                    content = zf.read(mf).decode('utf-8', errors='replace')
+                    for ts in re.findall(r'"(?:start|end)"\s*:\s*"([^"]+)"', content):
+                        try:
+                            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                            # Reject anything outside the plausible window
+                            if dt < _MIN_PLAUSIBLE or dt > _MAX_PLAUSIBLE:
+                                continue
+                            if earliest is None or dt < earliest:
+                                earliest = dt
+                            if latest is None or dt > latest:
+                                latest = dt
+                        except ValueError:
+                            pass
+                except Exception:
+                    pass
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+    return {
+        'success':     True,
+        'file_count':  file_count,
+        'total_bytes': total_bytes,
+        'date_start':  earliest.strftime('%Y-%m-%d') if earliest else None,
+        'date_end':    latest.strftime('%Y-%m-%d')   if latest   else None,
+    }
+
+
+def _sa_run_background(cmd: list, env: dict):
+    global _sa_import_running, _sa_import_state
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=env,
+        )
+
+        for line in iter(proc.stdout.readline, ''):
+            line = line.rstrip('\n')
+            if not line:
+                continue
+
+            m = re.search(r'Written\s+(\d+)\s+points', line)
+            if m:
+                _sa_import_state['written'] = int(m.group(1))
+            m = re.search(r'Skipped\s+:\s+(\d+)', line)
+            if m:
+                _sa_import_state['skipped'] = int(m.group(1))
+
+            _sa_import_state['last_line'] = line
+
+            entry = {'line': line, 'written': _sa_import_state['written']}
+            with _sa_import_log_lock:
+                _sa_import_log_buffer.append(entry)
+
+        proc.stdout.close()
+        rc = proc.wait()
+
+        if rc != 0:
+            _sa_import_state['failed']  = True
+            _sa_import_state['err_msg'] = f'Process exited with code {rc}'
+
+    except Exception as e:
+        _sa_import_state['failed']  = True
+        _sa_import_state['err_msg'] = str(e)
+        log.exception('SA import subprocess error')
+
+    finally:
+        _sa_import_state['done'] = True
+        _sa_import_running = False
+        _sa_import_lock.release()
+
+
+@app.post('/api/sa-import/upload')
+def sa_import_upload():
+    global _sa_import_running
+    if _sa_import_running:
+        return jsonify({'success': False, 'error': 'An import is already running'}), 409
+
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file uploaded'}), 400
+
+    f = request.files['file']
+    if not f.filename or not f.filename.lower().endswith('.zip'):
+        return jsonify({'success': False, 'error': 'File must be a .zip'}), 400
+
+    if os.path.isdir(_SA_UPLOAD_DIR):
+        shutil.rmtree(_SA_UPLOAD_DIR)
+    os.makedirs(_SA_UPLOAD_DIR, exist_ok=True)
+
+    dest = os.path.join(_SA_UPLOAD_DIR, 'backup.zip')
+    try:
+        f.save(dest)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Failed to save file: {e}'}), 500
+
+    probe = _sa_probe_zip_dates(dest)
+    probe['filename'] = f.filename
+    return jsonify(probe)
+
+
+@app.post('/api/sa-import/clear')
+def sa_import_clear():
+    if os.path.isdir(_SA_UPLOAD_DIR):
+        shutil.rmtree(_SA_UPLOAD_DIR)
+    return jsonify({'success': True})
+
+
+@app.get('/api/sa-import/stream')
+def sa_import_stream():
+    global _sa_import_running, _sa_import_state
+
+    zip_path = _sa_upload_path()
+    if not zip_path and not _sa_import_running:
+        def err():
+            yield 'event: error\ndata: {"error": "No backup file uploaded"}\n\n'
+        return Response(stream_with_context(err()), mimetype='text/event-stream')
+
+    range_start = request.args.get('range_start', '').strip()
+
+    if not _sa_import_running:
+        if not _sa_import_lock.acquire(blocking=False):
+            def busy():
+                yield 'event: error\ndata: {"error": "Import already running"}\n\n'
+            return Response(stream_with_context(busy()), mimetype='text/event-stream')
+
+        _sa_import_running = True
+
+        _sa_import_state.update({
+            'written':    0,
+            'skipped':    0,
+            'last_line':  '',
+            'done':       False,
+            'failed':     False,
+            'err_msg':    '',
+            'started_at': datetime.now(timezone.utc).isoformat(),
+        })
+        with _sa_import_log_lock:
+            _sa_import_log_buffer.clear()
+
+        script = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), '..', 'scripts', 'sa_import.py')
+        )
+        env = os.environ.copy()
+        env['PYTHONUNBUFFERED'] = '1'
+
+        cmd = ['python3', script, zip_path]
+        if range_start:
+            cmd += ['--range-start', range_start + 'T00:00:00']
+
+        log.info('SA import starting: %s', ' '.join(cmd))
+
+        t = threading.Thread(target=_sa_run_background, args=(cmd, env), daemon=True)
+        t.start()
+
+    def generate():
+        with _sa_import_log_lock:
+            buffered = list(_sa_import_log_buffer)
+
+        for entry in buffered:
+            payload = json.dumps(entry)
+            yield f'data: {payload}\n\n'
+
+        sent = len(buffered)
+        last_keepalive = time.monotonic()
+
+        while True:
+            with _sa_import_log_lock:
+                current = list(_sa_import_log_buffer)
+
+            for entry in current[sent:]:
+                payload = json.dumps(entry)
+                yield f'data: {payload}\n\n'
+                last_keepalive = time.monotonic()
+            sent = len(current)
+
+            if _sa_import_state['done']:
+                if _sa_import_state['failed']:
+                    yield f'event: error\ndata: {json.dumps({"error": _sa_import_state["err_msg"]})}\n\n'
+                else:
+                    summary = json.dumps({
+                        "written": _sa_import_state["written"],
+                        "skipped": _sa_import_state["skipped"],
+                    })
+                    yield f'event: done\ndata: {summary}\n\n'
+                break
+
+            if time.monotonic() - last_keepalive >= _SSE_KEEPALIVE_INTERVAL:
+                yield ': keepalive\n\n'
+                last_keepalive = time.monotonic()
+
+            time.sleep(1)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control':    'no-cache',
+            'X-Accel-Buffering': 'no',
+        }
+    )
+
+
+@app.get('/api/sa-import/status')
+def sa_import_status():
+    return jsonify({
+        'running':     _sa_import_running,
+        'has_upload':  _sa_upload_path() is not None,
+        'written':     _sa_import_state['written'],
+        'skipped':     _sa_import_state['skipped'],
+        'last_line':   _sa_import_state['last_line'],
+        'done':        _sa_import_state['done'],
+        'failed':      _sa_import_state['failed'],
+        'err_msg':     _sa_import_state['err_msg'],
+        'started_at':  _sa_import_state['started_at'],
+    })
 
 
 if __name__ == '__main__':

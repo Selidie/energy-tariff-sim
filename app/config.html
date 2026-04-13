@@ -156,6 +156,148 @@
     border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 6px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── SA Import card ──────────────────────────────────────────────────── */
+  #sa-drop-zone {
+    border: 2px dashed var(--border); border-radius: 8px;
+    padding: 28px 20px; text-align: center; cursor: pointer;
+    transition: border-color .2s, background .2s; position: relative;
+  }
+  #sa-drop-zone:hover, #sa-drop-zone.drag-over {
+    border-color: var(--accent); background: rgba(79,142,247,.05);
+  }
+  #sa-drop-zone .dz-icon { font-size: 28px; margin-bottom: 8px; }
+  #sa-drop-zone .dz-label { font-size: 13px; color: var(--muted); }
+  #sa-drop-zone .dz-label strong { color: var(--accent); }
+
+  #sa-file-info {
+    display: none;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px; margin-top: 14px;
+  }
+  #sa-file-info .fi-name { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+  #sa-file-info .fi-meta { font-size: 12px; color: var(--muted); display: flex; gap: 18px; flex-wrap: wrap; }
+  #sa-file-info .fi-meta span { display: flex; align-items: center; gap: 5px; }
+
+  #sa-date-range-row {
+    display: none; margin-top: 16px; align-items: flex-end; gap: 16px; flex-wrap: wrap;
+  }
+  #sa-date-range-row .field { margin-bottom: 0; flex: 1; min-width: 160px; }
+
+  /* Progress panel — polling-based */
+  #sa-progress-panel {
+    display: none; margin-top: 20px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px 24px;
+  }
+
+  .sa-progress-spinner-row {
+    display: flex; align-items: center; gap: 14px; margin-bottom: 16px;
+  }
+  .sa-big-spinner {
+    width: 32px; height: 32px; flex-shrink: 0;
+    border: 3px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .8s linear infinite;
+  }
+  .sa-progress-label { font-size: 15px; font-weight: 600; color: var(--text); }
+  .sa-progress-sub   { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  .sa-counter-box {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 18px;
+    display: flex; align-items: baseline; gap: 10px;
+  }
+  .sa-counter-num {
+    font-size: 28px; font-weight: 700; color: var(--accent2);
+    font-variant-numeric: tabular-nums; letter-spacing: -0.5px;
+  }
+  .sa-counter-label { font-size: 13px; color: var(--muted); }
+
+  #sa-progress-bar-wrap {
+    margin-top: 14px; background: var(--border); border-radius: 4px; height: 4px; overflow: hidden;
+  }
+  #sa-progress-bar {
+    height: 100%; background: var(--accent); width: 40%;
+    animation: slide-bar 1.4s ease-in-out infinite; border-radius: 4px;
+  }
+  #sa-progress-bar.done {
+    width: 100%; animation: none; background: var(--accent2); transition: width .4s;
+  }
+  #sa-progress-bar.failed {
+    width: 100%; animation: none; background: var(--danger);
+  }
+  @keyframes slide-bar {
+    0%   { margin-left: -40%; }
+    100% { margin-left: 100%; }
+  }
+
+  #sa-success-banner {
+    display: none; margin-top: 16px;
+    background: rgba(52,211,153,.08); border: 1px solid rgba(52,211,153,.3);
+    border-radius: 8px; padding: 16px 20px;
+  }
+  #sa-success-banner .sb-title {
+    color: var(--accent2); font-weight: 600; font-size: 14px; margin-bottom: 6px;
+  }
+  #sa-success-banner .sb-stats { font-size: 12px; color: var(--muted); }
+
+  #sa-error-banner {
+    display: none; margin-top: 16px;
+    background: rgba(248,113,113,.08); border: 1px solid rgba(248,113,113,.3);
+    border-radius: 8px; padding: 14px 16px; font-size: 12px; color: var(--danger);
+  }
+
+  #sa-action-row { margin-top: 16px; display: flex; gap: 10px; align-items: center; }
+  #sa-upload-progress { display: none; font-size: 12px; color: var(--muted); }
+
+  /* ── Import confirmation modal ───────────────────────────────────────── */
+  #import-modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.7); backdrop-filter: blur(3px);
+    z-index: 300; align-items: center; justify-content: center;
+  }
+  #import-modal-overlay.visible { display: flex; }
+
+  #import-modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 28px 28px 24px;
+    max-width: 480px; width: calc(100% - 40px);
+    box-shadow: 0 24px 64px rgba(0,0,0,.6);
+  }
+
+  #import-modal .modal-icon {
+    font-size: 32px; margin-bottom: 14px;
+  }
+  #import-modal h3 {
+    font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 10px;
+  }
+  #import-modal .modal-warning {
+    font-size: 13px; color: var(--warning); font-weight: 500;
+    background: rgba(251,191,36,.08); border: 1px solid rgba(251,191,36,.25);
+    border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; line-height: 1.5;
+  }
+  #import-modal .modal-body {
+    font-size: 13px; color: var(--muted); line-height: 1.6; margin-bottom: 18px;
+  }
+
+  .modal-scale-table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+    margin-top: 10px; margin-bottom: 4px;
+  }
+  .modal-scale-table th {
+    text-align: left; color: var(--muted); font-weight: 600;
+    padding: 5px 8px; border-bottom: 1px solid var(--border);
+    text-transform: uppercase; font-size: 10px; letter-spacing: .06em;
+  }
+  .modal-scale-table td {
+    padding: 6px 8px; color: var(--text); border-bottom: 1px solid rgba(46,50,80,.5);
+  }
+  .modal-scale-table tr:last-child td { border-bottom: none; }
+  .modal-scale-table .num { font-variant-numeric: tabular-nums; color: var(--accent2); font-weight: 600; }
+
+  .modal-actions {
+    display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px;
+  }
 </style>
 </head>
 <body>
@@ -253,7 +395,107 @@
     </div>
   </div>
 
+  <!-- Solar Assistant Backup Import -->
+  <div class="card">
+    <div class="card-header">
+      <h2>☀️ Solar Assistant Backup Import</h2>
+    </div>
+
+    <!-- Drop zone -->
+    <div id="sa-drop-zone">
+      <input type="file" id="sa-file-input" accept=".zip" style="display:none" />
+      <div class="dz-icon">📦</div>
+      <div class="dz-label"><strong>Browse</strong> or drag &amp; drop a Solar Assistant backup <code>.zip</code></div>
+    </div>
+    <div id="sa-upload-progress"><span class="spinner"></span> Uploading…</div>
+
+    <!-- File info once uploaded -->
+    <div id="sa-file-info">
+      <div class="fi-name" id="sa-fi-name"></div>
+      <div class="fi-meta">
+        <span>📅 <span id="sa-fi-dates">scanning…</span></span>
+        <span>📁 <span id="sa-fi-size"></span></span>
+        <span>🗂 <span id="sa-fi-files"></span> files</span>
+      </div>
+    </div>
+
+    <!-- Date range selector -->
+    <div id="sa-date-range-row">
+      <div class="field" style="flex:1; min-width:160px; margin-bottom:0">
+        <label>Import data from</label>
+        <input type="date" id="sa-range-start" />
+        <div class="hint">Leave blank to import all available data</div>
+      </div>
+      <div style="flex:1; min-width:160px; font-size:12px; color:var(--muted); padding-bottom:20px;">
+        Importing from an earlier date takes longer. Narrow the range if you only need recent history.
+      </div>
+    </div>
+
+    <!-- Action row -->
+    <div id="sa-action-row">
+      <button class="btn-primary" id="sa-start-btn" onclick="saConfirmImport()" disabled>Start Import</button>
+      <button class="btn-secondary btn-sm" id="sa-clear-btn" onclick="saClear()" style="display:none">✕ Clear</button>
+    </div>
+
+    <!-- Progress panel (polling-based) -->
+    <div id="sa-progress-panel">
+      <div class="sa-progress-spinner-row">
+        <div class="sa-big-spinner" id="sa-big-spinner"></div>
+        <div>
+          <div class="sa-progress-label" id="sa-progress-label">Importing…</div>
+          <div class="sa-progress-sub" id="sa-progress-sub">Starting up, please wait</div>
+        </div>
+      </div>
+
+      <div class="sa-counter-box">
+        <span class="sa-counter-num" id="sa-counter-num">0</span>
+        <span class="sa-counter-label">data points imported</span>
+      </div>
+
+      <div id="sa-progress-bar-wrap">
+        <div id="sa-progress-bar"></div>
+      </div>
+    </div>
+
+    <!-- Success banner -->
+    <div id="sa-success-banner">
+      <div class="sb-title">✅ Import Complete</div>
+      <div class="sb-stats" id="sa-success-stats"></div>
+    </div>
+
+    <!-- Error banner -->
+    <div id="sa-error-banner"></div>
+  </div>
+
 </main>
+
+<!-- ── Import Confirmation Modal ─────────────────────────────────────────── -->
+<div id="import-modal-overlay">
+  <div id="import-modal">
+    <div class="modal-icon">⏳</div>
+    <h3>Start Solar Assistant Import?</h3>
+    <div class="modal-warning">
+      ⚠️ This import can take several hours to complete depending on the amount of data being imported. Do not close this page or restart the container while the import is running.
+    </div>
+    <div class="modal-body">
+      Based on a typical Solar Assistant installation logging at 10-second intervals across 33 measurements, you can expect approximately:
+      <table class="modal-scale-table">
+        <thead>
+          <tr><th>Period</th><th class="num">Approx. Data Points</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1 Day</td><td class="num">~285,000</td></tr>
+          <tr><td>1 Month</td><td class="num">~8,500,000</td></tr>
+          <tr><td>1 Year</td><td class="num">~102,000,000</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="saModalCancel()">Cancel</button>
+      <button class="btn-primary" onclick="saModalContinue()">Continue</button>
+    </div>
+  </div>
+</div>
 
 <div id="save-bar">
   <span>You have unsaved changes</span>
@@ -271,6 +513,7 @@ let _dirty       = false;
 (async function init() {
   await loadConfig();
   checkBridgeStatus();
+  saCheckRunning();
 })();
 
 // ── Load config ────────────────────────────────────────────────────────────
@@ -281,7 +524,6 @@ async function loadConfig() {
     if (!d.success) throw new Error(d.error);
     const cfg = d.config;
 
-    // MQTT
     const url = cfg?.mqtt?.api_url || '';
     const m = url.match(/https?:\/\/([^:]+):?(\d*)/);
     if (m) {
@@ -289,20 +531,14 @@ async function loadConfig() {
       document.getElementById('mqtt-port').value = m[2] || '5003';
     }
 
-    // Timezone
     const tz = cfg?.simulation?.timezone || 'Europe/London';
     const tzSel = document.getElementById('timezone');
     const opt = [...tzSel.options].find(o => o.value === tz);
     if (opt) tzSel.value = tz;
     else tzSel.add(new Option(tz, tz, true, true));
 
-    // Baseline
     _baselineId = cfg?.simulation?.baseline_tariff_id || '';
-
-    // Tariffs
     _tariffs = (cfg?.tariffs || []).map(normaliseLoaded);
-
-    // If no baseline set yet, default to first tariff
     if (!_baselineId && _tariffs.length) {
       _baselineId = _tariffs[0].id || slugify(_tariffs[0].name);
     }
@@ -342,7 +578,6 @@ function renderTariffs() {
   list.querySelectorAll('.tariff-card').forEach(el => el.remove());
 
   _tariffs.forEach((t, i) => {
-    // Ensure stable ID for baseline comparison
     const tid        = t.id || slugify(t.name);
     const isBaseline = tid === _baselineId;
     const typeLabel  = t.type === 'flat' ? 'Flat Rate' : 'Economy 7';
@@ -479,7 +714,6 @@ function addTariff(type) {
 function removeTariff(i) {
   const removedId = _tariffs[i].id || slugify(_tariffs[i].name);
   _tariffs.splice(i, 1);
-  // If baseline was removed, default to first remaining
   if (removedId === _baselineId && _tariffs.length) {
     _baselineId = _tariffs[0].id || slugify(_tariffs[0].name);
   }
@@ -555,7 +789,6 @@ async function saveConfig() {
   const port = document.getElementById('mqtt-port').value.trim() || '5003';
   const tz   = document.getElementById('timezone').value;
 
-  // Assign stable IDs to any tariff that doesn't have one yet
   _tariffs.forEach(t => { if (!t.id) t.id = slugify(t.name); });
 
   const payload = {
@@ -628,6 +861,252 @@ function toast(msg, type) {
 }
 
 setInterval(checkBridgeStatus, 30000);
+
+
+// ── Solar Assistant Import (polling-based) ─────────────────────────────────
+
+let _saHasFile    = false;
+let _saPollTimer  = null;
+let _saStartTime  = null;
+
+// Wire up file input and drag-and-drop
+(function setupSaDrop() {
+  const input    = document.getElementById('sa-file-input');
+  const dropZone = document.getElementById('sa-drop-zone');
+
+  dropZone.addEventListener('click', e => { if (e.target !== input) input.click(); });
+  input.addEventListener('change', () => { if (input.files.length) saHandleFile(input.files[0]); });
+
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const file = e.dataTransfer?.files?.[0];
+    if (file && file.name.toLowerCase().endsWith('.zip')) saHandleFile(file);
+    else toast('Please drop a .zip file', 'err');
+  });
+})();
+
+async function saHandleFile(file) {
+  saReset();
+  document.getElementById('sa-upload-progress').style.display = 'flex';
+  document.getElementById('sa-drop-zone').style.opacity = '0.5';
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const r = await fetch('/api/sa-import/upload', { method: 'POST', body: formData });
+    const d = await r.json();
+
+    document.getElementById('sa-upload-progress').style.display = 'none';
+    document.getElementById('sa-drop-zone').style.opacity = '1';
+
+    if (!d.success) { saShowError('Upload failed: ' + (d.error || 'Unknown error')); return; }
+
+    _saHasFile = true;
+
+    document.getElementById('sa-file-info').style.display = 'block';
+    document.getElementById('sa-fi-name').textContent = d.filename;
+    document.getElementById('sa-fi-size').textContent = saFmtBytes(d.total_bytes);
+    document.getElementById('sa-fi-files').textContent = d.file_count;
+
+    if (d.date_start && d.date_end) {
+      document.getElementById('sa-fi-dates').textContent =
+        saFmtDate(d.date_start) + ' → ' + saFmtDate(d.date_end);
+      document.getElementById('sa-range-start').value = d.date_start;
+      document.getElementById('sa-range-start').min   = d.date_start;
+      document.getElementById('sa-range-start').max   = d.date_end;
+    } else {
+      document.getElementById('sa-fi-dates').textContent = 'Date range unknown';
+    }
+
+    document.getElementById('sa-date-range-row').style.display = 'flex';
+    document.getElementById('sa-start-btn').disabled = false;
+    document.getElementById('sa-clear-btn').style.display = '';
+
+  } catch(e) {
+    document.getElementById('sa-upload-progress').style.display = 'none';
+    document.getElementById('sa-drop-zone').style.opacity = '1';
+    saShowError('Upload error: ' + e.message);
+  }
+}
+
+// ── Import confirmation modal ──────────────────────────────────────────────
+
+function saConfirmImport() {
+  if (!_saHasFile) return;
+  document.getElementById('import-modal-overlay').classList.add('visible');
+}
+
+function saModalCancel() {
+  document.getElementById('import-modal-overlay').classList.remove('visible');
+}
+
+function saModalContinue() {
+  document.getElementById('import-modal-overlay').classList.remove('visible');
+  saStartImport();
+}
+
+// Close modal if user clicks the backdrop
+document.getElementById('import-modal-overlay').addEventListener('click', function(e) {
+  if (e.target === this) saModalCancel();
+});
+
+// ── Import execution ───────────────────────────────────────────────────────
+
+async function saStartImport() {
+  if (!_saHasFile) return;
+
+  const rangeStart = document.getElementById('sa-range-start').value.trim();
+
+  document.getElementById('sa-start-btn').disabled = true;
+  document.getElementById('sa-clear-btn').style.display = 'none';
+  document.getElementById('sa-success-banner').style.display = 'none';
+  document.getElementById('sa-error-banner').style.display = 'none';
+
+  // Show progress panel
+  document.getElementById('sa-progress-panel').style.display = 'block';
+  document.getElementById('sa-counter-num').textContent = '0';
+  document.getElementById('sa-progress-label').textContent = 'Importing…';
+  document.getElementById('sa-progress-sub').textContent = 'Starting up, please wait';
+  document.getElementById('sa-progress-bar').className = '';
+  document.getElementById('sa-big-spinner').style.display = '';
+
+  _saStartTime = Date.now();
+
+  // Kick off the import via the stream endpoint (fire-and-forget — we just need it to start)
+  let url = '/api/sa-import/stream';
+  if (rangeStart) url += '?range_start=' + encodeURIComponent(rangeStart);
+
+  fetch(url).catch(() => {});
+
+  // Start polling status every 3 seconds
+  _saPollTimer = setInterval(saPollStatus, 3000);
+  setTimeout(saPollStatus, 500);
+}
+
+async function saPollStatus() {
+  try {
+    const d = await (await fetch('/api/sa-import/status')).json();
+
+    // Update counter
+    const written = d.written || 0;
+    document.getElementById('sa-counter-num').textContent = written.toLocaleString();
+
+    // Update elapsed time in sub-label
+    if (_saStartTime && d.running) {
+      const elapsed = Math.floor((Date.now() - _saStartTime) / 1000);
+      const mins = Math.floor(elapsed / 60);
+      const secs = elapsed % 60;
+      const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+      document.getElementById('sa-progress-sub').textContent = `Running for ${timeStr}…`;
+    }
+
+    if (d.done) {
+      clearInterval(_saPollTimer);
+      _saPollTimer = null;
+
+      if (d.failed) {
+        saImportFailed(d.err_msg || 'Import failed');
+      } else {
+        saImportDone({ written: d.written, skipped: d.skipped });
+      }
+    }
+  } catch {
+    // Network hiccup — keep polling, don't stop
+  }
+}
+
+function saImportDone(summary) {
+  document.getElementById('sa-big-spinner').style.display = 'none';
+  document.getElementById('sa-progress-label').textContent = 'Import Complete';
+  document.getElementById('sa-progress-sub').textContent = '';
+  document.getElementById('sa-progress-bar').className = 'done';
+  document.getElementById('sa-counter-num').textContent = (summary.written || 0).toLocaleString();
+
+  const banner = document.getElementById('sa-success-banner');
+  banner.style.display = 'block';
+  document.getElementById('sa-success-stats').innerHTML =
+    `<strong>${(summary.written || 0).toLocaleString()}</strong> data points imported successfully.` +
+    (summary.skipped ? ` ${summary.skipped} unmapped measurement(s) skipped.` : '');
+
+  document.getElementById('sa-clear-btn').style.display = '';
+  document.getElementById('sa-clear-btn').textContent = '✕ Done / Clear';
+}
+
+function saImportFailed(msg) {
+  document.getElementById('sa-big-spinner').style.display = 'none';
+  document.getElementById('sa-progress-label').textContent = 'Import Failed';
+  document.getElementById('sa-progress-sub').textContent = '';
+  document.getElementById('sa-progress-bar').className = 'failed';
+  saShowError(msg);
+  document.getElementById('sa-start-btn').disabled = false;
+  document.getElementById('sa-clear-btn').style.display = '';
+}
+
+function saShowError(msg) {
+  const el = document.getElementById('sa-error-banner');
+  el.textContent = '✗ ' + msg;
+  el.style.display = 'block';
+}
+
+function saReset() {
+  _saHasFile = false;
+  if (_saPollTimer) { clearInterval(_saPollTimer); _saPollTimer = null; }
+  _saStartTime = null;
+
+  document.getElementById('sa-file-info').style.display        = 'none';
+  document.getElementById('sa-date-range-row').style.display   = 'none';
+  document.getElementById('sa-progress-panel').style.display   = 'none';
+  document.getElementById('sa-success-banner').style.display   = 'none';
+  document.getElementById('sa-error-banner').style.display     = 'none';
+  document.getElementById('sa-start-btn').disabled             = true;
+  document.getElementById('sa-clear-btn').style.display        = 'none';
+  document.getElementById('sa-clear-btn').textContent          = '✕ Clear';
+  document.getElementById('sa-range-start').value             = '';
+  document.getElementById('sa-counter-num').textContent        = '0';
+  document.getElementById('sa-progress-bar').className         = '';
+  document.getElementById('sa-big-spinner').style.display      = '';
+}
+
+async function saClear() {
+  saReset();
+  document.getElementById('sa-file-input').value = '';
+  try { await fetch('/api/sa-import/clear', { method: 'POST' }); } catch {}
+}
+
+async function saCheckRunning() {
+  try {
+    const d = await (await fetch('/api/sa-import/status')).json();
+    if (d.running) {
+      // Import already in progress (e.g. page refresh) — show progress and resume polling
+      _saStartTime = d.started_at ? new Date(d.started_at).getTime() : Date.now();
+      document.getElementById('sa-progress-panel').style.display = 'block';
+      document.getElementById('sa-counter-num').textContent = (d.written || 0).toLocaleString();
+      document.getElementById('sa-start-btn').disabled = true;
+      _saPollTimer = setInterval(saPollStatus, 3000);
+    } else if (d.done && !d.failed && d.written > 0) {
+      // Completed import — show success state
+      saImportDone({ written: d.written, skipped: d.skipped });
+      document.getElementById('sa-progress-panel').style.display = 'block';
+    }
+  } catch {}
+}
+
+function saFmtBytes(b) {
+  if (!b) return '—';
+  if (b > 1073741824) return (b / 1073741824).toFixed(1) + ' GB';
+  if (b > 1048576)    return (b / 1048576).toFixed(1) + ' MB';
+  return (b / 1024).toFixed(0) + ' KB';
+}
+
+function saFmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
 </script>
 </body>
 </html>
