@@ -249,7 +249,6 @@ def bridge_topics_numeric():
     try:
         api_url = _cfg['mqtt']['api_url'].rstrip('/')
         data = requests.get(f'{api_url}/topics/numeric', timeout=10).json()
-
         return jsonify({'success': True, 'topics': data.get('topics', []),
                         'configured_topics': _cfg['mqtt'].get('topics', {})})
     except requests.exceptions.ConnectionError as e:
@@ -468,10 +467,15 @@ _sa_import_state = {
     'started_at': None,
 }
 
-_sa_import_log_buffer: deque = deque(maxlen=200)
+# Keep the last 2000 lines in memory for the SSE stream — large enough to
+# always include meaningful context around a failure even on multi-million-
+# point imports.
+_sa_import_log_buffer: deque = deque(maxlen=2000)
 _sa_import_log_lock = threading.Lock()
 
-_SA_UPLOAD_DIR = '/tmp/sa_webui_upload'
+_SA_UPLOAD_DIR   = '/tmp/sa_webui_upload'
+_SA_IMPORT_LOG   = '/app/data/sa_import_last.log'    # full log, every run
+_SA_FAILURE_LOG  = '/app/data/sa_import_failure.log' # written only on failure, persists until next success
 _SSE_KEEPALIVE_INTERVAL = 15
 
 
@@ -497,7 +501,6 @@ def _sa_probe_zip_dates(zip_path: str) -> dict:
     file_count = 0
     total_bytes = 0
 
-    # Solar Assistant was first released in 2018; nothing earlier is real data.
     _MIN_PLAUSIBLE = datetime(2018, 1, 1, tzinfo=timezone.utc)
     _MAX_PLAUSIBLE = datetime.now(timezone.utc)
 
@@ -516,7 +519,6 @@ def _sa_probe_zip_dates(zip_path: str) -> dict:
                     for ts in re.findall(r'"(?:start|end)"\s*:\s*"([^"]+)"', content):
                         try:
                             dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-                            # Reject anything outside the plausible window
                             if dt < _MIN_PLAUSIBLE or dt > _MAX_PLAUSIBLE:
                                 continue
                             if earliest is None or dt < earliest:
@@ -542,7 +544,26 @@ def _sa_probe_zip_dates(zip_path: str) -> dict:
 def _sa_run_background(cmd: list, env: dict):
     global _sa_import_running, _sa_import_state
 
+    # Open the persistent log file for this run, replacing any previous one.
     try:
+        os.makedirs(os.path.dirname(_SA_IMPORT_LOG), exist_ok=True)
+        log_file = open(_SA_IMPORT_LOG, 'w', buffering=1)  # line-buffered so writes land immediately
+    except Exception as e:
+        log.warning('Could not open SA import log file %s: %s', _SA_IMPORT_LOG, e)
+        log_file = None
+
+    def _write_log(line: str):
+        if log_file:
+            try:
+                log_file.write(line + '\n')
+            except Exception:
+                pass
+
+    try:
+        _write_log(f'# SA import started at {_sa_import_state["started_at"]}')
+        _write_log(f'# Command: {" ".join(cmd)}')
+        _write_log('')
+
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -565,6 +586,7 @@ def _sa_run_background(cmd: list, env: dict):
                 _sa_import_state['skipped'] = int(m.group(1))
 
             _sa_import_state['last_line'] = line
+            _write_log(line)
 
             entry = {'line': line, 'written': _sa_import_state['written']}
             with _sa_import_log_lock:
@@ -576,15 +598,41 @@ def _sa_run_background(cmd: list, env: dict):
         if rc != 0:
             _sa_import_state['failed']  = True
             _sa_import_state['err_msg'] = f'Process exited with code {rc}'
+            _write_log(f'\n# FAILED — exit code {rc}')
+            _write_log(f'# Points written before failure: {_sa_import_state["written"]}')
+            # Copy the full log to a dedicated failure file so it survives
+            # the next successful run overwriting sa_import_last.log.
+            try:
+                if log_file:
+                    log_file.flush()
+                shutil.copy2(_SA_IMPORT_LOG, _SA_FAILURE_LOG)
+                log.error('SA import failed (rc=%d, written=%d). Failure log: %s',
+                          rc, _sa_import_state['written'], _SA_FAILURE_LOG)
+            except Exception as copy_err:
+                log.warning('Could not write failure log: %s', copy_err)
+        else:
+            _write_log(f'\n# SUCCESS — {_sa_import_state["written"]} points written')
+            # Remove any stale failure log so it doesn't cause confusion.
+            try:
+                if os.path.exists(_SA_FAILURE_LOG):
+                    os.remove(_SA_FAILURE_LOG)
+            except Exception:
+                pass
 
     except Exception as e:
         _sa_import_state['failed']  = True
         _sa_import_state['err_msg'] = str(e)
+        _write_log(f'\n# EXCEPTION: {e}')
         log.exception('SA import subprocess error')
 
     finally:
         _sa_import_state['done'] = True
         _sa_import_running = False
+        if log_file:
+            try:
+                log_file.close()
+            except Exception:
+                pass
         _sa_import_lock.release()
 
 
@@ -721,16 +769,51 @@ def sa_import_stream():
 @app.get('/api/sa-import/status')
 def sa_import_status():
     return jsonify({
-        'running':     _sa_import_running,
-        'has_upload':  _sa_upload_path() is not None,
-        'written':     _sa_import_state['written'],
-        'skipped':     _sa_import_state['skipped'],
-        'last_line':   _sa_import_state['last_line'],
-        'done':        _sa_import_state['done'],
-        'failed':      _sa_import_state['failed'],
-        'err_msg':     _sa_import_state['err_msg'],
-        'started_at':  _sa_import_state['started_at'],
+        'running':         _sa_import_running,
+        'has_upload':      _sa_upload_path() is not None,
+        'written':         _sa_import_state['written'],
+        'skipped':         _sa_import_state['skipped'],
+        'last_line':       _sa_import_state['last_line'],
+        'done':            _sa_import_state['done'],
+        'failed':          _sa_import_state['failed'],
+        'err_msg':         _sa_import_state['err_msg'],
+        'started_at':      _sa_import_state['started_at'],
+        'has_failure_log': os.path.exists(_SA_FAILURE_LOG),
     })
+
+
+@app.get('/api/sa-import/log')
+def sa_import_log():
+    """
+    Return the tail of the last import log (or failure log if one exists).
+    Query params:
+      ?lines=200   number of lines to return from the tail (default 200, max 5000)
+      ?failure=1   explicitly request the failure log instead of the last-run log
+    """
+    want_failure = request.args.get('failure', '0') == '1'
+    try:
+        n = min(int(request.args.get('lines', 200)), 5000)
+    except ValueError:
+        n = 200
+
+    path = _SA_FAILURE_LOG if (want_failure and os.path.exists(_SA_FAILURE_LOG)) else _SA_IMPORT_LOG
+
+    if not os.path.exists(path):
+        return jsonify({'success': False, 'error': 'No log file found'}), 404
+
+    try:
+        with open(path, 'r') as f:
+            all_lines = f.readlines()
+        tail = [line.rstrip('\n') for line in all_lines[-n:]]
+        return jsonify({
+            'success':     True,
+            'log_file':    path,
+            'total_lines': len(all_lines),
+            'returned':    len(tail),
+            'lines':       tail,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 if __name__ == '__main__':
