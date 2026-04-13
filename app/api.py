@@ -467,16 +467,12 @@ _sa_import_state = {
     'started_at': None,
 }
 
-# Keep the last 2000 lines in memory for the SSE stream — large enough to
-# always include meaningful context around a failure even on multi-million-
-# point imports.
 _sa_import_log_buffer: deque = deque(maxlen=2000)
 _sa_import_log_lock = threading.Lock()
 
-_SA_UPLOAD_DIR   = '/tmp/sa_webui_upload'
-_SA_IMPORT_LOG   = '/app/data/sa_import_last.log'    # full log, every run
-_SA_FAILURE_LOG  = '/app/data/sa_import_failure.log' # written only on failure, persists until next success
-_SSE_KEEPALIVE_INTERVAL = 15
+_SA_UPLOAD_DIR  = '/tmp/sa_webui_upload'
+_SA_IMPORT_LOG  = '/app/data/sa_import_last.log'    # full log, every run
+_SA_FAILURE_LOG = '/app/data/sa_import_failure.log' # written only on failure, persists until next success
 
 
 def _sa_upload_path() -> str:
@@ -490,11 +486,6 @@ def _sa_probe_zip_dates(zip_path: str) -> dict:
     """
     Read the .manifest file(s) inside the zip and extract the earliest/latest
     timestamps without spinning up Docker.
-
-    Only timestamps within a plausible range are accepted — Solar Assistant
-    didn't exist before 2018, and future dates are impossible.  This prevents
-    InfluxDB shard boundary artefacts (which can include epoch-zero or other
-    implausible dates) from polluting the date picker range shown to the user.
     """
     earliest = None
     latest   = None
@@ -544,10 +535,9 @@ def _sa_probe_zip_dates(zip_path: str) -> dict:
 def _sa_run_background(cmd: list, env: dict):
     global _sa_import_running, _sa_import_state
 
-    # Open the persistent log file for this run, replacing any previous one.
     try:
         os.makedirs(os.path.dirname(_SA_IMPORT_LOG), exist_ok=True)
-        log_file = open(_SA_IMPORT_LOG, 'w', buffering=1)  # line-buffered so writes land immediately
+        log_file = open(_SA_IMPORT_LOG, 'w', buffering=1)
     except Exception as e:
         log.warning('Could not open SA import log file %s: %s', _SA_IMPORT_LOG, e)
         log_file = None
@@ -600,8 +590,6 @@ def _sa_run_background(cmd: list, env: dict):
             _sa_import_state['err_msg'] = f'Process exited with code {rc}'
             _write_log(f'\n# FAILED — exit code {rc}')
             _write_log(f'# Points written before failure: {_sa_import_state["written"]}')
-            # Copy the full log to a dedicated failure file so it survives
-            # the next successful run overwriting sa_import_last.log.
             try:
                 if log_file:
                     log_file.flush()
@@ -612,7 +600,6 @@ def _sa_run_background(cmd: list, env: dict):
                 log.warning('Could not write failure log: %s', copy_err)
         else:
             _write_log(f'\n# SUCCESS — {_sa_import_state["written"]} points written')
-            # Remove any stale failure log so it doesn't cause confusion.
             try:
                 if os.path.exists(_SA_FAILURE_LOG):
                     os.remove(_SA_FAILURE_LOG)
@@ -664,106 +651,65 @@ def sa_import_upload():
     return jsonify(probe)
 
 
+@app.post('/api/sa-import/start')
+def sa_import_start():
+    """
+    Start the import as a fire-and-forget background thread.
+    Returns immediately with 200 — the UI polls /api/sa-import/status for progress.
+    This replaces the old SSE stream endpoint as the import trigger, eliminating
+    the persistent long-lived HTTP connection that was adding unnecessary load.
+    """
+    global _sa_import_running, _sa_import_state
+
+    zip_path = _sa_upload_path()
+    if not zip_path:
+        return jsonify({'success': False, 'error': 'No backup file uploaded'}), 400
+
+    if _sa_import_running:
+        return jsonify({'success': False, 'error': 'An import is already running'}), 409
+
+    if not _sa_import_lock.acquire(blocking=False):
+        return jsonify({'success': False, 'error': 'An import is already running'}), 409
+
+    _sa_import_running = True
+    _sa_import_state.update({
+        'written':    0,
+        'skipped':    0,
+        'last_line':  '',
+        'done':       False,
+        'failed':     False,
+        'err_msg':    '',
+        'started_at': datetime.now(timezone.utc).isoformat(),
+    })
+    with _sa_import_log_lock:
+        _sa_import_log_buffer.clear()
+
+    body        = request.get_json(force=True, silent=True) or {}
+    range_start = (body.get('range_start') or '').strip()
+
+    script = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), '..', 'scripts', 'sa_import.py')
+    )
+    env = os.environ.copy()
+    env['PYTHONUNBUFFERED'] = '1'
+
+    cmd = ['python3', script, zip_path]
+    if range_start:
+        cmd += ['--range-start', range_start + 'T00:00:00']
+
+    log.info('SA import starting: %s', ' '.join(cmd))
+
+    t = threading.Thread(target=_sa_run_background, args=(cmd, env), daemon=True)
+    t.start()
+
+    return jsonify({'success': True, 'started_at': _sa_import_state['started_at']})
+
+
 @app.post('/api/sa-import/clear')
 def sa_import_clear():
     if os.path.isdir(_SA_UPLOAD_DIR):
         shutil.rmtree(_SA_UPLOAD_DIR)
     return jsonify({'success': True})
-
-
-@app.get('/api/sa-import/stream')
-def sa_import_stream():
-    global _sa_import_running, _sa_import_state
-
-    zip_path = _sa_upload_path()
-    if not zip_path and not _sa_import_running:
-        def err():
-            yield 'event: error\ndata: {"error": "No backup file uploaded"}\n\n'
-        return Response(stream_with_context(err()), mimetype='text/event-stream')
-
-    range_start = request.args.get('range_start', '').strip()
-
-    if not _sa_import_running:
-        if not _sa_import_lock.acquire(blocking=False):
-            def busy():
-                yield 'event: error\ndata: {"error": "Import already running"}\n\n'
-            return Response(stream_with_context(busy()), mimetype='text/event-stream')
-
-        _sa_import_running = True
-
-        _sa_import_state.update({
-            'written':    0,
-            'skipped':    0,
-            'last_line':  '',
-            'done':       False,
-            'failed':     False,
-            'err_msg':    '',
-            'started_at': datetime.now(timezone.utc).isoformat(),
-        })
-        with _sa_import_log_lock:
-            _sa_import_log_buffer.clear()
-
-        script = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), '..', 'scripts', 'sa_import.py')
-        )
-        env = os.environ.copy()
-        env['PYTHONUNBUFFERED'] = '1'
-
-        cmd = ['python3', script, zip_path]
-        if range_start:
-            cmd += ['--range-start', range_start + 'T00:00:00']
-
-        log.info('SA import starting: %s', ' '.join(cmd))
-
-        t = threading.Thread(target=_sa_run_background, args=(cmd, env), daemon=True)
-        t.start()
-
-    def generate():
-        with _sa_import_log_lock:
-            buffered = list(_sa_import_log_buffer)
-
-        for entry in buffered:
-            payload = json.dumps(entry)
-            yield f'data: {payload}\n\n'
-
-        sent = len(buffered)
-        last_keepalive = time.monotonic()
-
-        while True:
-            with _sa_import_log_lock:
-                current = list(_sa_import_log_buffer)
-
-            for entry in current[sent:]:
-                payload = json.dumps(entry)
-                yield f'data: {payload}\n\n'
-                last_keepalive = time.monotonic()
-            sent = len(current)
-
-            if _sa_import_state['done']:
-                if _sa_import_state['failed']:
-                    yield f'event: error\ndata: {json.dumps({"error": _sa_import_state["err_msg"]})}\n\n'
-                else:
-                    summary = json.dumps({
-                        "written": _sa_import_state["written"],
-                        "skipped": _sa_import_state["skipped"],
-                    })
-                    yield f'event: done\ndata: {summary}\n\n'
-                break
-
-            if time.monotonic() - last_keepalive >= _SSE_KEEPALIVE_INTERVAL:
-                yield ': keepalive\n\n'
-                last_keepalive = time.monotonic()
-
-            time.sleep(1)
-
-    return Response(
-        stream_with_context(generate()),
-        mimetype='text/event-stream',
-        headers={
-            'Cache-Control':    'no-cache',
-            'X-Accel-Buffering': 'no',
-        }
-    )
 
 
 @app.get('/api/sa-import/status')
@@ -787,8 +733,8 @@ def sa_import_log():
     """
     Return the tail of the last import log (or failure log if one exists).
     Query params:
-      ?lines=200   number of lines to return from the tail (default 200, max 5000)
-      ?failure=1   explicitly request the failure log instead of the last-run log
+      ?lines=200   number of lines from the tail (default 200, max 5000)
+      ?failure=1   request the failure log instead of the last-run log
     """
     want_failure = request.args.get('failure', '0') == '1'
     try:
