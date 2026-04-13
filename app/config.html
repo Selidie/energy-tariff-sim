@@ -475,7 +475,7 @@
     <div class="modal-icon">⏳</div>
     <h3>Start Solar Assistant Import?</h3>
     <div class="modal-warning">
-      ⚠️ This import can take several hours to complete depending on the amount of data being imported. Do not close this page or restart the container while the import is running.
+      ⚠️ This import can take several hours to complete depending on the amount of data being imported. You can safely close this page — the import runs in the background and will continue until complete.
     </div>
     <div class="modal-body">
       Based on a typical Solar Assistant installation logging at 10-second intervals across 33 measurements, you can expect approximately:
@@ -976,13 +976,28 @@ async function saStartImport() {
 
   _saStartTime = Date.now();
 
-  // Kick off the import via the stream endpoint (fire-and-forget — we just need it to start)
-  let url = '/api/sa-import/stream';
-  if (rangeStart) url += '?range_start=' + encodeURIComponent(rangeStart);
+  // Fire a plain POST to start the import — the server spawns a background
+  // thread and returns immediately.  No SSE stream is opened, so there is no
+  // persistent HTTP connection adding load during a multi-hour import.
+  // Progress is tracked by polling /api/sa-import/status below.
+  try {
+    const body = rangeStart ? { range_start: rangeStart } : {};
+    const r = await fetch('/api/sa-import/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!d.success) {
+      saImportFailed(d.error || 'Failed to start import');
+      return;
+    }
+  } catch(e) {
+    saImportFailed('Could not reach server: ' + e.message);
+    return;
+  }
 
-  fetch(url).catch(() => {});
-
-  // Start polling status every 3 seconds
+  // Poll /api/sa-import/status every 3 seconds for progress updates
   _saPollTimer = setInterval(saPollStatus, 3000);
   setTimeout(saPollStatus, 500);
 }
