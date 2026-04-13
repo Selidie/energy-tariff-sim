@@ -39,3 +39,9 @@ services:
       # - INFLUX_TOKEN=your_influxdb_token
       # - INFLUX_ORG=home
       # - INFLUX_BUCKET=solar
+      #
+      # Solar Assistant import — staging paths are resolved automatically at
+      # runtime by inspecting this container's own mounts via `docker inspect`.
+      # You only need to set these if auto-resolution doesn't work for your setup:
+      # - STAGING_CONTAINER_DIR=/app/data/sa_staging
+      # - STAGING_HOST_DIR=/override/host/path/to/data/sa_staging
