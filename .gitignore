@@ -2,6 +2,7 @@ venv/
 .env
 data/raw/
 data/aggregated/
+data/sa_staging/
 __pycache__/
 *.pyc
 *.pyo
