@@ -8,6 +8,11 @@ HTTP timeout that was killing the mqtt-bridge route.
 
 Dev/fallback path: mqtt-bridge /history endpoint (unchanged behaviour).
 Triggered automatically when INFLUX_URL / INFLUX_TOKEN are not set in the env.
+
+InfluxDB schema (written by mqtt-bridge):
+  measurement : "solar"                       (fixed)
+  tag topic   : "inverter_1/grid_power/state" (short topic, prefix stripped)
+  field       : "value"                       (fixed)
 """
 import os
 import logging
@@ -76,36 +81,26 @@ def _influx_env() -> dict | None:
     return {'url': url, 'token': token, 'org': org, 'bucket': bucket}
 
 
-def _topic_to_measurement_field(topic: str) -> tuple[str, str]:
-    """
-    Convert a Solar Assistant MQTT topic like 'inverter_1/grid_power/state'
-    into an InfluxDB measurement + field pair.
-
-    Solar Assistant stores data with:
-      measurement = <device>/<metric>   e.g. 'inverter_1/grid_power'
-      field       = last segment        e.g. 'state'
-
-    We split on the last '/' to derive both.
-    """
-    parts = topic.rsplit('/', 1)
-    if len(parts) == 2:
-        return parts[0], parts[1]
-    return topic, 'value'
-
-
-def _build_flux_chunk(bucket: str, measurement: str, field: str,
+def _build_flux_chunk(bucket: str, topic: str,
                       start: datetime, stop: datetime, window: str) -> str:
     """
-    Build a Flux query for a single measurement/field over a bounded time chunk.
-    Uses aggregateWindow to downsample so the result set stays manageable.
+    Build a Flux query for a single topic over a bounded time chunk.
+
+    mqtt-bridge writes data with this schema:
+      measurement = "solar"       (fixed literal)
+      tag: topic  = <short_topic> (e.g. "inverter_1/grid_power/state")
+      field       = "value"       (fixed literal)
+
+    We filter on measurement + field + topic tag, then aggregateWindow.
     """
     start_rfc = start.strftime('%Y-%m-%dT%H:%M:%SZ')
     stop_rfc  = stop.strftime('%Y-%m-%dT%H:%M:%SZ')
     return f"""
 from(bucket: "{bucket}")
   |> range(start: {start_rfc}, stop: {stop_rfc})
-  |> filter(fn: (r) => r._measurement == "{measurement}")
-  |> filter(fn: (r) => r._field == "{field}")
+  |> filter(fn: (r) => r._measurement == "solar")
+  |> filter(fn: (r) => r._field == "value")
+  |> filter(fn: (r) => r.topic == "{topic}")
   |> aggregateWindow(every: {window}, fn: mean, createEmpty: false)
   |> keep(columns: ["_time", "_value"])
 """.strip()
@@ -125,8 +120,8 @@ def fetch_history_direct(
     Returns a series dict identical to what mqtt-bridge /history returns:
       { topic: [ {'time': <unix_seconds>, 'value': <float>}, ... ], ... }
 
-    Chunking keeps individual Flux queries small (7 days × 1-min aggregation
-    ≈ 10k points per topic) and avoids the memory / timeout issues that come
+    Chunking keeps individual Flux queries small (7 days x 1-min aggregation
+    ~10k points per topic) and avoids the memory / timeout issues that come
     from querying 469 days in one shot across NAS-backed InfluxDB.
     """
     try:
@@ -146,7 +141,7 @@ def fetch_history_direct(
 
     log.info(
         "Direct InfluxDB query: url=%s org=%s bucket=%s topics=%s "
-        "range=%s→%s window=%s chunk=%dd",
+        "range=%s->%s window=%s chunk=%dd",
         url, org, bucket, topics,
         dt_from.strftime('%Y-%m-%d'), dt_to.strftime('%Y-%m-%d'),
         window, chunk_days,
@@ -157,20 +152,17 @@ def fetch_history_direct(
         query_api = client.query_api()
 
         for topic in topics:
-            measurement, field = _topic_to_measurement_field(topic)
-            log.info("  topic=%s  measurement=%s  field=%s", topic, measurement, field)
+            log.info("  topic=%s", topic)
 
             chunk_start  = dt_from
             topic_points = 0
 
             while chunk_start < dt_to:
                 chunk_end = min(chunk_start + timedelta(days=chunk_days), dt_to)
-                flux = _build_flux_chunk(
-                    bucket, measurement, field, chunk_start, chunk_end, window
-                )
+                flux = _build_flux_chunk(bucket, topic, chunk_start, chunk_end, window)
 
                 try:
-                    # Each chunk is 7 days of 1-min aggregates ≈ 10 k points —
+                    # Each chunk is 7 days of 1-min aggregates ~10k points —
                     # safe to load with query() without memory pressure.
                     chunk_records = []
                     tables = query_api.query(flux, org=org)
@@ -189,7 +181,7 @@ def fetch_history_direct(
                     total_chunks += 1
 
                     log.debug(
-                        "    chunk %s→%s: %d points",
+                        "    chunk %s->%s: %d points",
                         chunk_start.strftime('%Y-%m-%d'),
                         chunk_end.strftime('%Y-%m-%d'),
                         len(chunk_records),
@@ -197,7 +189,7 @@ def fetch_history_direct(
 
                 except Exception as e:
                     log.error(
-                        "    chunk %s→%s FAILED for topic %s: %s",
+                        "    chunk %s->%s FAILED for topic %s: %s",
                         chunk_start.strftime('%Y-%m-%d'),
                         chunk_end.strftime('%Y-%m-%d'),
                         topic, e,
@@ -415,7 +407,7 @@ def run_ingest(cfg: dict, date_from: str = None, date_to: str = None) -> tuple:
         if range_str is None:
             range_str = sim_cfg.get('history_range', '700d')
         log.info(
-            "User-supplied date range: %s → %s  (requesting %s)",
+            "User-supplied date range: %s -> %s  (requesting %s)",
             date_from, date_to, range_str,
         )
     else:
@@ -471,7 +463,7 @@ def run_ingest(cfg: dict, date_from: str = None, date_to: str = None) -> tuple:
             'ok': False,
             'reason': (
                 f"Direct InfluxDB query returned no data for topics {topics} "
-                f"over {abs_from.date()} → {abs_to.date()}. "
+                f"over {abs_from.date()} -> {abs_to.date()}. "
                 "Check the bucket name, measurement names, and that data exists "
                 "in this range."
             ),
