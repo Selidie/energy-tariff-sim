@@ -1,0 +1,17 @@
+{
+  "meta": {
+    "fileName": "20260408T110434Z.meta",
+    "size": 6236
+  },
+  "limited": false,
+  "files": [
+    {
+      "database": "solar_assistant",
+      "policy": "",
+      "shardID": 69,
+      "fileName": "20260408T110434Z.s69.tar.gz",
+      "size": 3117568,
+      "lastModified": 0
+    }
+  ]
+}
