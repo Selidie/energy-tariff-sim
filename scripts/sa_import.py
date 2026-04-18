@@ -8,9 +8,20 @@ Usage:
   python3 sa_import.py /path/to/backup.zip --inspect
   python3 sa_import.py /path/to/backup.zip --range-start 2025-01-01T00:00:00
 
-Options:
+Import mode options (mutually exclusive; default is full import):
+  --topics-from-settings /path/to/settings.yaml
+                     Custom import: read required topics from the energy-tarriff-sim
+                     settings.yaml (mqtt.topics values).  Only those measurements
+                     are written to InfluxDB — all others are skipped.
+  --topics inverter_1/grid_power/state,inverter_1/pv_power/state,...
+                     Custom import: explicit comma-separated list of short topic
+                     names (i.e. the topic tag stored in InfluxDB, without the
+                     solar_assistant/ prefix).
+
+Other options:
   --dry-run          Preview topic mapping without writing to InfluxDB 2.x
   --inspect          Print tags and sample values for each measurement, then exit
+  --yes              Skip the confirmation prompt (for scripted/automated runs)
   --range-start      ISO datetime — only import data after this point
   --range-end        ISO datetime — only import data before this point
   --prefix           MQTT prefix tag written to InfluxDB (default: solar_assistant)
@@ -118,6 +129,145 @@ MEASUREMENT_MAP = {
     'PV voltage 1':             ('inverter_1/pv_voltage_1/state',             'inverter_0'),
     'PV voltage 2':             ('inverter_1/pv_voltage_2/state',             'inverter_0'),
 }
+
+
+# ---------------------------------------------------------------------------
+# Topic filter resolution
+# ---------------------------------------------------------------------------
+
+def topics_from_settings_yaml(settings_path: str) -> set:
+    """
+    Parse an energy-tarriff-sim settings.yaml and return the set of short
+    topic names listed under mqtt.topics.
+
+    Requires PyYAML (already in requirements.txt via the app container).
+    Falls back to a simple line-based parser so the script remains usable
+    even when PyYAML is not installed in the import environment.
+    """
+    try:
+        import yaml
+        with open(settings_path) as f:
+            cfg = yaml.safe_load(f)
+        topics = set(cfg.get('mqtt', {}).get('topics', {}).values())
+        if not topics:
+            log.error('No topics found under mqtt.topics in %s', settings_path)
+            sys.exit(1)
+        return topics
+    except ImportError:
+        pass
+
+    # Fallback: naive YAML parser — handles simple key: value lines only.
+    log.warning('PyYAML not available; using fallback parser for %s', settings_path)
+    topics = set()
+    in_mqtt_topics = False
+    indent_mqtt = indent_topics = None
+    with open(settings_path) as f:
+        for line in f:
+            stripped = line.rstrip()
+            if not stripped or stripped.lstrip().startswith('#'):
+                continue
+            indent = len(stripped) - len(stripped.lstrip())
+            key_val = stripped.strip()
+            if key_val == 'mqtt:':
+                in_mqtt_topics = False
+                indent_mqtt = indent
+                continue
+            if indent_mqtt is not None and indent == indent_mqtt + 2 and key_val == 'topics:':
+                in_mqtt_topics = True
+                indent_topics = indent
+                continue
+            if in_mqtt_topics:
+                if indent <= indent_topics:
+                    in_mqtt_topics = False
+                    continue
+                if ':' in key_val:
+                    value = key_val.split(':', 1)[1].strip()
+                    if value:
+                        topics.add(value)
+    if not topics:
+        log.error('No topics found under mqtt.topics in %s (fallback parser)', settings_path)
+        sys.exit(1)
+    return topics
+
+
+def resolve_topic_filter(args) -> set | None:
+    """
+    Return a set of allowed short topic names, or None for a full import.
+
+    --topics-from-settings and --topics are mutually exclusive; the argparse
+    group enforces this.  When neither is supplied, None is returned and
+    run_import() will process every measurement in MEASUREMENT_MAP.
+    """
+    if args.topics_from_settings:
+        topics = topics_from_settings_yaml(args.topics_from_settings)
+        log.info('Custom import — topics from %s:', args.topics_from_settings)
+        for t in sorted(topics):
+            log.info('  • %s', t)
+        return topics
+
+    if args.topics:
+        topics = {t.strip() for t in args.topics.split(',') if t.strip()}
+        if not topics:
+            log.error('--topics produced an empty list — check your input')
+            sys.exit(1)
+        log.info('Custom import — topics from --topics flag:')
+        for t in sorted(topics):
+            log.info('  • %s', t)
+        return topics
+
+    log.info('Full import — all mapped measurements will be written')
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Confirmation prompt
+# ---------------------------------------------------------------------------
+
+def confirm_import(backup_path: str, topic_filter: set | None,
+                   range_start, range_end, influx_bucket: str) -> None:
+    """
+    Print a pre-flight summary and ask the user to confirm before anything
+    is written.  Raises SystemExit if the user declines.
+
+    Not called in --dry-run or --inspect mode (no writes occur).
+    Bypassed by --yes for scripted/automated runs.
+    """
+    print()
+    print('=' * 60)
+    print('  Solar Assistant Import — Pre-flight Summary')
+    print('=' * 60)
+    print(f'  Backup file  : {backup_path}')
+    print(f'  Target bucket: {influx_bucket}')
+
+    if topic_filter is not None:
+        print(f'  Import mode  : custom ({len(topic_filter)} topic(s))')
+        for t in sorted(topic_filter):
+            print(f'               • {t}')
+    else:
+        print(f'  Import mode  : full ({len(MEASUREMENT_MAP)} mapped measurements)')
+
+    if range_start or range_end:
+        start_str = range_start.strftime('%Y-%m-%d %H:%M UTC') if range_start else 'beginning'
+        end_str   = range_end.strftime('%Y-%m-%d %H:%M UTC')   if range_end   else 'now'
+        print(f'  Date range   : {start_str} → {end_str}')
+    else:
+        print('  Date range   : all available data')
+
+    print('=' * 60)
+    print()
+
+    try:
+        answer = input('  Proceed with import? [y/N] ').strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        log.info('Import cancelled.')
+        sys.exit(0)
+
+    if answer != 'y':
+        log.info('Import cancelled.')
+        sys.exit(0)
+
+    print()
 
 
 # ---------------------------------------------------------------------------
@@ -382,11 +532,13 @@ def pick_field(available_fields: list, preferred: str) -> str:
     return available_fields[0]
 
 
-def inspect_measurements():
+def inspect_measurements(topic_filter: set = None):
     measurements = get_measurements()
     log.info('Found %d measurements', len(measurements))
     print('\n' + '='*70)
     print('MEASUREMENT INSPECTION')
+    if topic_filter is not None:
+        print(f'(filtered to {len(topic_filter)} topic(s))')
     print('='*70)
     for m in measurements:
         fields = get_field_keys(m)
@@ -397,6 +549,8 @@ def inspect_measurements():
         else:
             topic = '*** NOT MAPPED ***'
             chosen_field = fields[0] if fields else None
+        if topic_filter is not None and topic not in topic_filter:
+            continue
         try:
             count_data = v1_query(f'SELECT COUNT("{chosen_field}") FROM "{m}"', db=SA_DB_NAME, epoch='ns')
             count_series = count_data.get('results', [{}])[0].get('series', [])
@@ -485,14 +639,17 @@ def write_batch_with_retry(write_api, bucket: str, org: str, batch: list) -> boo
     return False
 
 
-def run_import(prefix, range_start, range_end, dry_run, batch_size, write_pause, write_api, influx_org, influx_bucket):
+def run_import(prefix, range_start, range_end, dry_run, batch_size, write_pause,
+               write_api, influx_org, influx_bucket, topic_filter=None):
     from influxdb_client import Point
 
     measurements = get_measurements()
-    log.info('Found %d measurements to import', len(measurements))
+    log.info('Found %d measurements in backup', len(measurements))
+    if topic_filter is not None:
+        log.info('Topic filter active — only %d topic(s) will be written', len(topic_filter))
     log.info('Batch size: %d  Write pause: %.2fs  Page size: %d', batch_size, write_pause, V1_PAGE_SIZE)
 
-    total = skipped = written = failed_points = preview = 0
+    total = skipped = filtered = written = failed_points = preview = 0
     batch = []
 
     for measurement in measurements:
@@ -503,6 +660,14 @@ def run_import(prefix, range_start, range_end, dry_run, batch_size, write_pause,
             continue
 
         short_topic, preferred_field = mapping
+
+        # --- topic filter check -------------------------------------------
+        if topic_filter is not None and short_topic not in topic_filter:
+            log.debug('Filtered out: %s (%s)', measurement, short_topic)
+            filtered += 1
+            continue
+        # ------------------------------------------------------------------
+
         field = pick_field(get_field_keys(measurement), preferred_field)
         if not field:
             log.warning('No fields found for "%s" — skipping', measurement)
@@ -553,7 +718,7 @@ def run_import(prefix, range_start, range_end, dry_run, batch_size, write_pause,
     if failed_points:
         log.warning('Failed to write %d points after retries', failed_points)
 
-    return total, skipped, written
+    return total, skipped, filtered, written
 
 
 # ---------------------------------------------------------------------------
@@ -565,6 +730,8 @@ def main():
     parser.add_argument('backup')
     parser.add_argument('--dry-run',               action='store_true')
     parser.add_argument('--inspect',               action='store_true')
+    parser.add_argument('--yes',                   action='store_true',
+                        help='Skip the confirmation prompt (for scripted/automated runs)')
     parser.add_argument('--range-start')
     parser.add_argument('--range-end')
     parser.add_argument('--prefix',                default='solar_assistant')
@@ -574,10 +741,33 @@ def main():
     parser.add_argument('--docker-network',        default=DEFAULT_DOCKER_NETWORK)
     parser.add_argument('--staging-container-dir', default=DEFAULT_STAGING_CONTAINER_DIR)
     parser.add_argument('--keep-container',        action='store_true')
+
+    # Import mode — mutually exclusive
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        '--topics-from-settings',
+        metavar='SETTINGS_YAML',
+        help='Custom import: read required topics from energy-tarriff-sim settings.yaml '
+             '(mqtt.topics section).  Only those measurements are written to InfluxDB.'
+    )
+    mode_group.add_argument(
+        '--topics',
+        metavar='TOPIC1,TOPIC2,...',
+        help='Custom import: comma-separated list of short topic names to import '
+             '(e.g. inverter_1/grid_power/state,inverter_1/pv_power/state). '
+             'Topics must match the values in MEASUREMENT_MAP (without the MQTT prefix).'
+    )
+
     args = parser.parse_args()
 
     range_start = datetime.fromisoformat(args.range_start).replace(tzinfo=timezone.utc) if args.range_start else None
     range_end   = datetime.fromisoformat(args.range_end).replace(tzinfo=timezone.utc)   if args.range_end   else None
+
+    topic_filter = resolve_topic_filter(args)
+
+    # Confirm before doing anything — skipped for --dry-run, --inspect, and --yes
+    if not args.dry_run and not args.inspect and not args.yes:
+        confirm_import(args.backup, topic_filter, range_start, range_end, INFLUX_BUCKET)
 
     staging_host_dir = get_staging_host_dir(args.staging_container_dir)
 
@@ -610,21 +800,27 @@ def main():
         check_container_logs(10)
 
         if args.inspect:
-            inspect_measurements()
+            inspect_measurements(topic_filter)
             return
 
-        total, skipped, written = run_import(
+        total, skipped, filtered, written = run_import(
             args.prefix, range_start, range_end,
             args.dry_run, args.batch_size, args.write_pause,
-            write_api, INFLUX_ORG, INFLUX_BUCKET
+            write_api, INFLUX_ORG, INFLUX_BUCKET,
+            topic_filter=topic_filter,
         )
 
         log.info('--- Import complete ---')
-        if args.dry_run:
-            log.info('Would have written %d points (%d skipped)', total, skipped)
+        if topic_filter is not None:
+            log.info('Import mode : custom (%d topic(s))', len(topic_filter))
         else:
-            log.info('Written  : %d points', written)
-            log.info('Skipped  : %d unmapped measurements', skipped)
+            log.info('Import mode : full')
+        if args.dry_run:
+            log.info('Would have written %d points (%d skipped, %d filtered)', total, skipped, filtered)
+        else:
+            log.info('Written    : %d points', written)
+            log.info('Skipped    : %d unmapped measurements', skipped)
+            log.info('Filtered   : %d measurements excluded by topic filter', filtered)
 
     finally:
         if container_id and not args.keep_container:
