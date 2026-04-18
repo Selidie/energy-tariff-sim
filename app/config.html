@@ -157,7 +157,7 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ── SA Import card ──────────────────────────────────────────────────── */
+  /* SA Import card */
   #sa-drop-zone {
     border: 2px dashed var(--border); border-radius: 8px;
     padding: 28px 20px; text-align: center; cursor: pointer;
@@ -184,7 +184,7 @@
   }
   #sa-date-range-row .field { margin-bottom: 0; flex: 1; min-width: 160px; }
 
-  /* Progress panel — polling-based */
+  /* Progress panel */
   #sa-progress-panel {
     display: none; margin-top: 20px;
     background: var(--surface2); border: 1px solid var(--border);
@@ -250,7 +250,7 @@
   #sa-action-row { margin-top: 16px; display: flex; gap: 10px; align-items: center; }
   #sa-upload-progress { display: none; font-size: 12px; color: var(--muted); }
 
-  /* ── Import confirmation modal ───────────────────────────────────────── */
+  /* Import confirmation modal */
   #import-modal-overlay {
     display: none; position: fixed; inset: 0;
     background: rgba(0,0,0,.7); backdrop-filter: blur(3px);
@@ -265,12 +265,8 @@
     box-shadow: 0 24px 64px rgba(0,0,0,.6);
   }
 
-  #import-modal .modal-icon {
-    font-size: 32px; margin-bottom: 14px;
-  }
-  #import-modal h3 {
-    font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 10px;
-  }
+  #import-modal .modal-icon { font-size: 32px; margin-bottom: 14px; }
+  #import-modal h3 { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 10px; }
   #import-modal .modal-warning {
     font-size: 13px; color: var(--warning); font-weight: 500;
     background: rgba(251,191,36,.08); border: 1px solid rgba(251,191,36,.25);
@@ -279,6 +275,30 @@
   #import-modal .modal-body {
     font-size: 13px; color: var(--muted); line-height: 1.6; margin-bottom: 18px;
   }
+
+  /* Import mode radio option cards */
+  .import-mode-group { margin-bottom: 18px; }
+  .import-mode-group .mode-label {
+    font-size: 12px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .06em;
+    display: block; margin-bottom: 10px;
+  }
+  .import-mode-option {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
+    margin-bottom: 8px; cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .import-mode-option:last-child { margin-bottom: 0; }
+  .import-mode-option:hover { border-color: var(--accent); background: rgba(79,142,247,.04); }
+  .import-mode-option input[type="radio"] {
+    margin-top: 2px; flex-shrink: 0;
+    accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer;
+  }
+  .import-mode-option .mode-text strong {
+    display: block; font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 2px;
+  }
+  .import-mode-option .mode-text span { font-size: 12px; color: var(--muted); }
 
   .modal-scale-table {
     width: 100%; border-collapse: collapse; font-size: 12px;
@@ -303,7 +323,7 @@
 <body>
 
 <header>
-  <h1>⚡ Energy Tariff Simulator</h1>
+  <h1>&#9889; Energy Tariff Simulator</h1>
   <nav class="nav-links">
     <a href="/">Simulator</a>
     <a href="/config" class="active">Config</a>
@@ -315,10 +335,10 @@
   <!-- MQTT Bridge & Timezone -->
   <div class="card">
     <div class="card-header">
-      <h2>🔌 MQTT Bridge</h2>
+      <h2>&#128268; MQTT Bridge</h2>
       <div style="display:flex;align-items:center;gap:10px">
-        <span id="bridge-status" style="font-size:12px;color:var(--muted)">checking…</span>
-        <button class="btn-warn btn-sm" onclick="runDiagnose()">🔍 Diagnose</button>
+        <span id="bridge-status" style="font-size:12px;color:var(--muted)">checking&hellip;</span>
+        <button class="btn-warn btn-sm" onclick="runDiagnose()">&#128269; Diagnose</button>
       </div>
     </div>
     <div class="row row-3">
@@ -374,14 +394,14 @@
       </div>
     </div>
     <div id="diag-panel">
-      <div id="diag-content"><span class="spinner"></span> Running diagnostics…</div>
+      <div id="diag-content"><span class="spinner"></span> Running diagnostics&hellip;</div>
     </div>
   </div>
 
   <!-- Tariffs -->
   <div class="card">
     <div class="card-header">
-      <h2>⚡ Tariffs</h2>
+      <h2>&#9889; Tariffs</h2>
       <div style="display:flex;gap:8px">
         <button class="btn-ghost btn-sm" onclick="addTariff('flat')">+ Flat Rate</button>
         <button class="btn-ghost btn-sm" onclick="addTariff('day_night')">+ Economy 7</button>
@@ -398,24 +418,24 @@
   <!-- Solar Assistant Backup Import -->
   <div class="card">
     <div class="card-header">
-      <h2>☀️ Solar Assistant Backup Import</h2>
+      <h2>&#9728;&#65039; Solar Assistant Backup Import</h2>
     </div>
 
     <!-- Drop zone -->
     <div id="sa-drop-zone">
       <input type="file" id="sa-file-input" accept=".zip" style="display:none" />
-      <div class="dz-icon">📦</div>
+      <div class="dz-icon">&#128230;</div>
       <div class="dz-label"><strong>Browse</strong> or drag &amp; drop a Solar Assistant backup <code>.zip</code></div>
     </div>
-    <div id="sa-upload-progress"><span class="spinner"></span> Uploading…</div>
+    <div id="sa-upload-progress"><span class="spinner"></span> Uploading&hellip;</div>
 
     <!-- File info once uploaded -->
     <div id="sa-file-info">
       <div class="fi-name" id="sa-fi-name"></div>
       <div class="fi-meta">
-        <span>📅 <span id="sa-fi-dates">scanning…</span></span>
-        <span>📁 <span id="sa-fi-size"></span></span>
-        <span>🗂 <span id="sa-fi-files"></span> files</span>
+        <span>&#128197; <span id="sa-fi-dates">scanning&hellip;</span></span>
+        <span>&#128193; <span id="sa-fi-size"></span></span>
+        <span>&#128194; <span id="sa-fi-files"></span> files</span>
       </div>
     </div>
 
@@ -434,7 +454,7 @@
     <!-- Action row -->
     <div id="sa-action-row">
       <button class="btn-primary" id="sa-start-btn" onclick="saConfirmImport()" disabled>Start Import</button>
-      <button class="btn-secondary btn-sm" id="sa-clear-btn" onclick="saClear()" style="display:none">✕ Clear</button>
+      <button class="btn-secondary btn-sm" id="sa-clear-btn" onclick="saClear()" style="display:none">&#10005; Clear</button>
     </div>
 
     <!-- Progress panel (polling-based) -->
@@ -442,7 +462,7 @@
       <div class="sa-progress-spinner-row">
         <div class="sa-big-spinner" id="sa-big-spinner"></div>
         <div>
-          <div class="sa-progress-label" id="sa-progress-label">Importing…</div>
+          <div class="sa-progress-label" id="sa-progress-label">Importing&hellip;</div>
           <div class="sa-progress-sub" id="sa-progress-sub">Starting up, please wait</div>
         </div>
       </div>
@@ -459,7 +479,7 @@
 
     <!-- Success banner -->
     <div id="sa-success-banner">
-      <div class="sb-title">✅ Import Complete</div>
+      <div class="sb-title">&#9989; Import Complete</div>
       <div class="sb-stats" id="sa-success-stats"></div>
     </div>
 
@@ -469,15 +489,37 @@
 
 </main>
 
-<!-- ── Import Confirmation Modal ─────────────────────────────────────────── -->
+<!-- Import Confirmation Modal -->
 <div id="import-modal-overlay">
   <div id="import-modal">
-    <div class="modal-icon">⏳</div>
+    <div class="modal-icon">&#9203;</div>
     <h3>Start Solar Assistant Import?</h3>
     <div class="modal-warning">
-      ⚠️ This import can take several hours to complete depending on the amount of data being imported. You can safely close this page — the import runs in the background and will continue until complete.
+      &#9888;&#65039; This import can take several hours to complete depending on the amount of data being imported. You can safely close this page &mdash; the import runs in the background and will continue until complete.
     </div>
     <div class="modal-body">
+
+      <!-- Import mode selection -->
+      <div class="import-mode-group">
+        <span class="mode-label">Import Mode</span>
+
+        <label class="import-mode-option">
+          <input type="radio" name="import-mode" value="custom" checked />
+          <span class="mode-text">
+            <strong>Custom Import</strong>
+            <span>Only imports the Solar Assistant topics required by the simulator. Faster and leaner.</span>
+          </span>
+        </label>
+
+        <label class="import-mode-option">
+          <input type="radio" name="import-mode" value="full" />
+          <span class="mode-text">
+            <strong>Full Import</strong>
+            <span>Imports all Solar Assistant topics from the backup file.</span>
+          </span>
+        </label>
+      </div>
+
       Based on a typical Solar Assistant installation logging at 10-second intervals across 33 measurements, you can expect approximately:
       <table class="modal-scale-table">
         <thead>
@@ -589,10 +631,10 @@ function renderTariffs() {
 
     card.innerHTML = `
       <div class="tariff-header" onclick="toggleTariff(${i})">
-        <span class="tariff-chevron ${t._open ? 'open' : ''}">▶</span>
+        <span class="tariff-chevron ${t._open ? 'open' : ''}">&#9658;</span>
         <span class="tariff-title">${escHtml(t.name || 'Unnamed Tariff')}</span>
         <span class="tariff-badges">
-          ${isBaseline ? '<span class="tariff-badge badge-baseline">★ Current Tariff</span>' : ''}
+          ${isBaseline ? '<span class="tariff-badge badge-baseline">&#9733; Current Tariff</span>' : ''}
           <span class="tariff-badge ${badgeClass}">${typeLabel}</span>
         </span>
       </div>
@@ -672,8 +714,8 @@ function renderTariffs() {
 
         <div class="tariff-actions">
           ${isBaseline
-            ? `<span style="font-size:12px;color:var(--gold)">★ This is your current tariff — used as the comparison baseline</span>`
-            : `<button class="btn-gold btn-sm" onclick="setBaseline(${i})">★ Set as Current Tariff</button>`}
+            ? `<span style="font-size:12px;color:var(--gold)">&#9733; This is your current tariff &mdash; used as the comparison baseline</span>`
+            : `<button class="btn-gold btn-sm" onclick="setBaseline(${i})">&#9733; Set as Current Tariff</button>`}
           <span class="spacer"></span>
           <button class="btn-danger btn-sm" onclick="removeTariff(${i})">Remove</button>
         </div>
@@ -726,7 +768,7 @@ async function runDiagnose() {
   const panel = document.getElementById('diag-panel');
   const content = document.getElementById('diag-content');
   panel.classList.add('visible');
-  content.innerHTML = '<span class="spinner"></span> Running diagnostics…';
+  content.innerHTML = '<span class="spinner"></span> Running diagnostics&hellip;';
   try {
     const d = await (await fetch('/api/bridge/diagnose')).json();
     if (!d.success) {
@@ -737,10 +779,10 @@ async function runDiagnose() {
     let html = `
       <div class="diag-row"><span class="diag-label">Bridge URL</span><span class="diag-value">${escHtml(d.bridge_url)}</span></div>
       <div class="diag-row"><span class="diag-label">MQTT Broker</span><span class="diag-value">${escHtml(d.broker||'—')}</span></div>
-      <div class="diag-row"><span class="diag-label">MQTT Connected</span><span class="diag-value ${mqttOk?'diag-ok':'diag-err'}">${mqttOk?'✓ Yes':'✗ No'}</span></div>
-      <div class="diag-row"><span class="diag-label">InfluxDB Enabled</span><span class="diag-value ${influxOk?'diag-ok':'diag-err'}">${influxOk?'✓ Yes':'✗ No — ingest requires InfluxDB'}</span></div>
+      <div class="diag-row"><span class="diag-label">MQTT Connected</span><span class="diag-value ${mqttOk?'diag-ok':'diag-err'}">${mqttOk?'&#10003; Yes':'&#10007; No'}</span></div>
+      <div class="diag-row"><span class="diag-label">InfluxDB Enabled</span><span class="diag-value ${influxOk?'diag-ok':'diag-err'}">${influxOk?'&#10003; Yes':'&#10007; No — ingest requires InfluxDB'}</span></div>
       <div class="diag-row"><span class="diag-label">Topics on Bridge</span><span class="diag-value">${d.topic_count} topic(s) under <code>${escHtml(d.prefix)}</code></span></div>
-      <div class="diag-row"><span class="diag-label">Ingest Ready</span><span class="diag-value ${readyOk?'diag-ok':'diag-warn'}">${readyOk?'✓ All checks passed':'⚠ See topic status below'}</span></div>`;
+      <div class="diag-row"><span class="diag-label">Ingest Ready</span><span class="diag-value ${readyOk?'diag-ok':'diag-warn'}">${readyOk?'&#10003; All checks passed':'&#9888; See topic status below'}</span></div>`;
     const topics = d.configured_topics || {};
     const keys = Object.keys(topics);
     if (keys.length) {
@@ -748,7 +790,7 @@ async function runDiagnose() {
       for (const [label, info] of Object.entries(topics)) {
         const found = info.found;
         html += `<div class="topic-chip ${found?'found':'missing'}">
-          <div class="tc-label" style="color:${found?'var(--accent2)':'var(--danger)'}">${found?'✓':'✗'} ${escHtml(label)}</div>
+          <div class="tc-label" style="color:${found?'var(--accent2)':'var(--danger)'}">${found?'&#10003;':'&#10007;'} ${escHtml(label)}</div>
           <div class="tc-path">${escHtml(info.full_topic)}</div>
           ${found ? `<div class="tc-val" style="color:var(--accent2)">${escHtml(String(info.latest_value??'—'))} <span style="color:var(--muted)">@ ${escHtml(info.latest_ts||'—')}</span></div>`
                   : `<div class="tc-val" style="color:var(--danger)">Not found in bridge</div>`}
@@ -760,7 +802,7 @@ async function runDiagnose() {
       try {
         const nd = await (await fetch('/api/bridge/topics/numeric')).json();
         if (nd.success && nd.topics.length) {
-          html += `<div style="margin-top:14px;font-size:11px;font-weight:600;color:var(--warning);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">⚠ Available Numeric Topics</div>`;
+          html += `<div style="margin-top:14px;font-size:11px;font-weight:600;color:var(--warning);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">&#9888; Available Numeric Topics</div>`;
           html += `<div style="background:var(--surface2);border-radius:6px;padding:10px 12px;font-family:monospace;font-size:11px;color:var(--text);max-height:200px;overflow-y:auto;line-height:1.8">${nd.topics.map(t=>escHtml(t)).join('<br>')}</div>`;
         }
       } catch {}
@@ -945,8 +987,11 @@ function saModalCancel() {
 }
 
 function saModalContinue() {
-  document.getElementById('import-modal-overlay').classList.remove('visible');
-  saStartImport();
+  const mode =
+    document.querySelector('input[name="import-mode"]:checked')?.value || 'custom';
+
+  saModalCancel();
+  saStartImport(mode);
 }
 
 // Close modal if user clicks the backdrop
@@ -956,7 +1001,7 @@ document.getElementById('import-modal-overlay').addEventListener('click', functi
 
 // ── Import execution ───────────────────────────────────────────────────────
 
-async function saStartImport() {
+async function saStartImport(mode) {
   if (!_saHasFile) return;
 
   const rangeStart = document.getElementById('sa-range-start').value.trim();
@@ -977,11 +1022,13 @@ async function saStartImport() {
   _saStartTime = Date.now();
 
   // Fire a plain POST to start the import — the server spawns a background
-  // thread and returns immediately.  No SSE stream is opened, so there is no
+  // thread and returns immediately. No SSE stream is opened, so there is no
   // persistent HTTP connection adding load during a multi-hour import.
   // Progress is tracked by polling /api/sa-import/status below.
   try {
-    const body = rangeStart ? { range_start: rangeStart } : {};
+    const body = { mode: mode || 'custom' };
+    if (rangeStart) body.range_start = rangeStart;
+
     const r = await fetch('/api/sa-import/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1080,7 +1127,7 @@ function saReset() {
   document.getElementById('sa-start-btn').disabled             = true;
   document.getElementById('sa-clear-btn').style.display        = 'none';
   document.getElementById('sa-clear-btn').textContent          = '✕ Clear';
-  document.getElementById('sa-range-start').value             = '';
+  document.getElementById('sa-range-start').value              = '';
   document.getElementById('sa-counter-num').textContent        = '0';
   document.getElementById('sa-progress-bar').className         = '';
   document.getElementById('sa-big-spinner').style.display      = '';

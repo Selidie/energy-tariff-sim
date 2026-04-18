@@ -29,10 +29,11 @@
   .nav-links a:hover { color: var(--text); border-color: var(--border); }
   .nav-links a.active { color: var(--accent); border-color: var(--accent); background: rgba(79,142,247,.08); }
   main { max-width: 1100px; margin: 0 auto; padding: 24px; }
-  .toolbar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+  .toolbar { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
   button {
     padding: 8px 18px; border-radius: 6px; border: none;
     cursor: pointer; font-size: 13px; font-weight: 500; transition: opacity .15s;
+    display: inline-flex; align-items: center; gap: 7px;
   }
   button:hover { opacity: .85; }
   button:disabled { opacity: .4; cursor: not-allowed; }
@@ -63,7 +64,7 @@
   .log {
     background: #0a0c12; border: 1px solid var(--border); border-radius: 8px;
     padding: 12px 16px; font-family: 'Fira Mono', 'Cascadia Code', monospace;
-    font-size: 12px; color: var(--muted); max-height: 160px; overflow-y: auto; margin-top: 8px;
+    font-size: 12px; color: var(--muted); max-height: 160px; overflow-y: auto; margin-top: 0;
   }
   .log .info { color: var(--accent); }
   .log .ok   { color: var(--accent2); }
@@ -74,12 +75,35 @@
   }
   .flex { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .saved-at { font-size: 11px; color: var(--muted); font-style: italic; }
-  #spinner {
-    display: inline-block; width: 14px; height: 14px;
-    border: 2px solid var(--border); border-top-color: var(--accent);
-    border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 6px;
+
+  /* ── Button throbber ── */
+  .btn-spinner {
+    display: inline-block; width: 12px; height: 12px; flex-shrink: 0;
+    border: 2px solid rgba(255,255,255,.3); border-top-color: #fff;
+    border-radius: 50%; animation: spin .65s linear infinite;
   }
+  .btn-primary .btn-spinner { border-color: rgba(255,255,255,.3); border-top-color: #fff; }
+  .btn-secondary .btn-spinner { border-color: var(--border); border-top-color: var(--accent); }
+
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Indeterminate progress bar ── */
+  #pipeline-progress {
+    height: 3px; border-radius: 2px; background: var(--border);
+    margin-bottom: 12px; overflow: hidden;
+    opacity: 0; transition: opacity .2s;
+  }
+  #pipeline-progress.running { opacity: 1; }
+  #pipeline-progress-bar {
+    height: 100%; width: 35%;
+    background: var(--accent);
+    border-radius: 2px;
+    animation: indeterminate 1.5s ease-in-out infinite;
+  }
+  @keyframes indeterminate {
+    0%   { margin-left: -35%; }
+    100% { margin-left: 100%; }
+  }
 
   /* ── Version badge ── */
   .version-badge {
@@ -116,12 +140,12 @@
 
 <header>
   <div id="status-dot"></div>
-  <h1>⚡ Energy Tariff Simulator</h1>
-  <a id="version-badge" class="version-badge" href="#" target="_blank" rel="noopener" title="Checking version…">
-    <span class="ver-icon" id="ver-icon">○</span>
-    <span id="ver-label">…</span>
+  <h1>&#9889; Energy Tariff Simulator</h1>
+  <a id="version-badge" class="version-badge" href="#" target="_blank" rel="noopener" title="Checking version&hellip;">
+    <span class="ver-icon" id="ver-icon">&#9675;</span>
+    <span id="ver-label">&hellip;</span>
   </a>
-  <span id="header-status">connecting…</span>
+  <span id="header-status">connecting&hellip;</span>
   <nav class="nav-links">
     <a href="/" class="active">Simulator</a>
     <a href="/config">Config</a>
@@ -137,18 +161,24 @@
     <div class="date-range-row">
       <label for="date-from">Ingest from</label>
       <input type="date" id="date-from" />
-      <span class="date-range-sep">→</span>
+      <span class="date-range-sep">&rarr;</span>
       <label for="date-to">to</label>
       <input type="date" id="date-to" />
       <span class="date-range-hint" id="date-range-hint">Used by Ingest &amp; Run Full Pipeline</span>
     </div>
 
+    <!-- Action buttons -->
     <div class="toolbar">
-      <button class="btn-primary" onclick="runFull()">▶ Run Full Pipeline</button>
-      <button class="btn-secondary" onclick="runIngest()">① Ingest</button>
-      <button class="btn-secondary" onclick="runAggregate()">② Aggregate</button>
-      <button class="btn-secondary" onclick="runSimulate()">③ Simulate</button>
+      <button class="btn-primary"   id="btn-run"       onclick="runFull()">      <span class="btn-label">&#9654; Run Full Pipeline</span></button>
+      <button class="btn-secondary" id="btn-ingest"    onclick="runIngest()">    <span class="btn-label">&#9312; Ingest</span></button>
+      <button class="btn-secondary" id="btn-aggregate" onclick="runAggregate()"> <span class="btn-label">&#9313; Aggregate</span></button>
+      <button class="btn-secondary" id="btn-simulate"  onclick="runSimulate()">  <span class="btn-label">&#9314; Simulate</span></button>
     </div>
+
+    <!-- Indeterminate progress bar — shown while any pipeline action is running -->
+    <div id="pipeline-progress"><div id="pipeline-progress-bar"></div></div>
+
+    <!-- Log output -->
     <div id="log" class="log"><span class="info">Ready.</span></div>
   </div>
 
@@ -157,7 +187,7 @@
       <h2>Tariff Comparison</h2>
       <div class="flex">
         <span class="saved-at" id="saved-at-label"></span>
-        <button class="btn-danger" id="clear-btn" onclick="clearResults()" style="display:none;padding:5px 12px;font-size:12px">✕ Clear Comparison</button>
+        <button class="btn-danger" id="clear-btn" onclick="clearResults()" style="display:none;padding:5px 12px;font-size:12px">&#10005; Clear Comparison</button>
       </div>
     </div>
     <div id="compare-content"><span style="color:var(--muted)">Run the pipeline to see results.</span></div>
@@ -166,7 +196,7 @@
   <div class="card">
     <h2>Detailed Breakdown</h2>
     <div class="flex" style="margin-bottom:16px">
-      <select id="tariff-select" onchange="loadDetail()"><option value="">— select tariff —</option></select>
+      <select id="tariff-select" onchange="loadDetail()"><option value="">&#8212; select tariff &#8212;</option></select>
       <select id="view-select" onchange="loadDetail()">
         <option value="daily">Daily</option>
         <option value="monthly">Monthly</option>
@@ -186,29 +216,22 @@ const GH_REL_URL = `https://github.com/${GH_REPO}/releases/latest`;
 
 // ── Version / update check ────────────────────────────────────────────────
 
-/**
- * Normalise a version string for comparison.
- * Strips a leading 'v' so "v1.2.3" == "1.2.3".
- * Returns the string as-is for dev/commit-hash builds that don't match semver.
- */
 function _stripV(v) { return v ? v.replace(/^v/, '') : ''; }
 
 async function checkVersion(currentVersion) {
-  const badge   = document.getElementById('version-badge');
-  const icon    = document.getElementById('ver-icon');
-  const label   = document.getElementById('ver-label');
+  const badge = document.getElementById('version-badge');
+  const icon  = document.getElementById('ver-icon');
+  const label = document.getElementById('ver-label');
 
-  // Show the running version immediately
   const displayVer = currentVersion && currentVersion !== 'dev'
     ? `v${_stripV(currentVersion)}`
     : currentVersion || 'dev';
   label.textContent = displayVer;
   badge.href = GH_REL_URL;
 
-  // Dev / commit-hash builds — don't attempt a version comparison
   if (!currentVersion || currentVersion === 'dev' || /^\d+\.[a-f0-9]+$/.test(currentVersion)) {
-    icon.textContent  = '○';
-    badge.title = 'Dev build — no release version to compare';
+    icon.textContent = '\u25cb';
+    badge.title = 'Dev build \u2014 no release version to compare';
     return;
   }
 
@@ -218,44 +241,38 @@ async function checkVersion(currentVersion) {
       cache: 'no-store',
     });
     if (!resp.ok) throw new Error(`GitHub API ${resp.status}`);
-    const rel        = await resp.json();
-    const latest     = _stripV(rel.tag_name || '');
-    const current    = _stripV(currentVersion);
+    const rel     = await resp.json();
+    const latest  = _stripV(rel.tag_name || '');
+    const current = _stripV(currentVersion);
 
     if (latest && latest === current) {
-      icon.textContent = '✔';
+      icon.textContent = '\u2714';
       badge.classList.add('up-to-date');
       badge.title = `Up to date (${displayVer})`;
     } else if (latest) {
-      icon.textContent = '✘';
+      icon.textContent = '\u2718';
       badge.classList.add('outdated');
-      badge.title = `Update available: v${latest} (you have ${displayVer}) — click to view release`;
-      label.textContent = `${displayVer} → v${latest}`;
+      badge.title = `Update available: v${latest} (you have ${displayVer}) \u2014 click to view release`;
+      label.textContent = `${displayVer} \u2192 v${latest}`;
     }
   } catch (err) {
-    // Network failure, rate limit, etc. — show the version but no indicator
-    icon.textContent = '○';
+    icon.textContent = '\u25cb';
     badge.title = `Could not check for updates: ${err.message}`;
   }
 }
 
 // ── Date range helpers ────────────────────────────────────────────────────
 
-function _isoToday() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function _defaultFrom() {
-  return '2024-06-01';
-}
+function _isoToday() { return new Date().toISOString().slice(0, 10); }
+function _defaultFrom() { return '2024-06-01'; }
 
 function initDateRange() {
   const fromEl = document.getElementById('date-from');
   const toEl   = document.getElementById('date-to');
   fromEl.value = _defaultFrom();
   toEl.value   = _isoToday();
-  fromEl.max = _isoToday();
-  toEl.max   = _isoToday();
+  fromEl.max   = _isoToday();
+  toEl.max     = _isoToday();
   fromEl.addEventListener('change', () => {
     if (toEl.value && toEl.value < fromEl.value) toEl.value = fromEl.value;
     updateDateHint();
@@ -273,7 +290,7 @@ function updateDateHint() {
   const hint = document.getElementById('date-range-hint');
   if (from && to) {
     const days = Math.round((new Date(to) - new Date(from)) / 86400000) + 1;
-    hint.textContent = `${days} day${days !== 1 ? 's' : ''} · Used by Ingest & Run Full Pipeline`;
+    hint.textContent = `${days} day${days !== 1 ? 's' : ''} \u00b7 Used by Ingest & Run Full Pipeline`;
   } else {
     hint.textContent = 'Used by Ingest & Run Full Pipeline';
   }
@@ -305,9 +322,7 @@ async function checkHealth() {
     const d = await (await fetch(`${API}/health`)).json();
     document.getElementById('status-dot').className = 'ok';
     document.getElementById('header-status').textContent =
-      `API OK · ${d.tariffs?.length ?? 0} tariff(s) · ${d.history_range || '700d'} history`;
-
-    // Version check runs only once, on the first successful health response
+      `API OK \u00b7 ${d.tariffs?.length ?? 0} tariff(s) \u00b7 ${d.history_range || '700d'} history`;
     if (!_versionChecked) {
       _versionChecked = true;
       checkVersion(d.version || 'dev');
@@ -338,80 +353,145 @@ async function loadSavedResults() {
 async function clearResults() {
   try { await fetch(`${API}/api/results`, { method: 'DELETE' }); } catch {}
   document.getElementById('compare-content').innerHTML = '<span style="color:var(--muted)">Run the pipeline to see results.</span>';
-  document.getElementById('tariff-select').innerHTML = '<option value="">— select tariff —</option>';
+  document.getElementById('tariff-select').innerHTML = '<option value="">\u2014 select tariff \u2014</option>';
   document.getElementById('detail-content').innerHTML = '<span style="color:var(--muted)">Select a tariff above.</span>';
   document.getElementById('saved-at-label').textContent = '';
   document.getElementById('clear-btn').style.display = 'none';
   log('Comparison cleared.', 'info');
 }
 
+// ── Button / progress state ───────────────────────────────────────────────
+
+// Map of button id → original label HTML (restored after action completes)
+const _btnLabels = {};
+
+/**
+ * Set a button into its busy state: inject a spinner and replace the label.
+ * All other pipeline buttons are disabled but left visually unchanged.
+ */
+function setBusy(activeId, busyText) {
+  const allIds = ['btn-run', 'btn-ingest', 'btn-aggregate', 'btn-simulate'];
+
+  allIds.forEach(id => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    if (id === activeId) {
+      // Save original label content if not already saved
+      if (!_btnLabels[id]) {
+        _btnLabels[id] = btn.querySelector('.btn-label').innerHTML;
+      }
+      btn.querySelector('.btn-label').textContent = busyText;
+      // Prepend spinner if not already present
+      if (!btn.querySelector('.btn-spinner')) {
+        const s = document.createElement('span');
+        s.className = 'btn-spinner';
+        btn.insertBefore(s, btn.firstChild);
+      }
+    }
+    btn.disabled = true;
+  });
+
+  // Show indeterminate progress bar
+  document.getElementById('pipeline-progress').classList.add('running');
+}
+
+/**
+ * Restore all buttons to their idle state and hide the progress bar.
+ */
+function setIdle() {
+  const allIds = ['btn-run', 'btn-ingest', 'btn-aggregate', 'btn-simulate'];
+
+  allIds.forEach(id => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    // Remove spinner
+    const s = btn.querySelector('.btn-spinner');
+    if (s) s.remove();
+    // Restore label
+    if (_btnLabels[id]) {
+      btn.querySelector('.btn-label').innerHTML = _btnLabels[id];
+    }
+    btn.disabled = false;
+  });
+
+  // Hide indeterminate progress bar
+  document.getElementById('pipeline-progress').classList.remove('running');
+}
+
 // ── Pipeline actions ──────────────────────────────────────────────────────
 
-async function post(path, label, body = null) {
-  log(`${label}…`, 'info');
-  disableButtons(true);
-  try {
-    const opts = { method: 'POST' };
-    if (body) { opts.headers = {'Content-Type': 'application/json'}; opts.body = JSON.stringify(body); }
-    const r = await fetch(`${API}${path}`, opts);
-    const d = await r.json();
-    if (!r.ok || !d.success) throw new Error(d.error || r.statusText);
-    return d;
-  } catch (e) {
-    log(`✗ ${label} failed: ${e.message}`, 'err');
-    throw e;
-  } finally {
-    disableButtons(false);
-  }
+async function post(path, body = null) {
+  const opts = { method: 'POST' };
+  if (body) { opts.headers = {'Content-Type': 'application/json'}; opts.body = JSON.stringify(body); }
+  const r = await fetch(`${API}${path}`, opts);
+  const d = await r.json();
+  if (!r.ok || !d.success) throw new Error(d.error || r.statusText);
+  return d;
 }
 
 async function runIngest() {
   const range = getDateRange();
   const label = range.date_from && range.date_to
-    ? `Ingest (${range.date_from} → ${range.date_to})`
+    ? `Ingest (${range.date_from} \u2192 ${range.date_to})`
     : 'Ingest';
+  log(`${label}\u2026`, 'info');
+  setBusy('btn-ingest', 'Ingesting\u2026');
   try {
-    const d = await post('/ingest', label, range);
-    log(`✓ Ingest: ${d.rows} rows  ${d.from?.slice(0,10)} → ${d.to?.slice(0,10)}`, 'ok');
-  } catch {}
+    const d = await post('/ingest', range);
+    log(`\u2713 Ingest: ${d.rows} rows  ${d.from?.slice(0,10)} \u2192 ${d.to?.slice(0,10)}`, 'ok');
+  } catch(e) {
+    log(`\u2717 Ingest failed: ${e.message}`, 'err');
+  } finally {
+    setIdle();
+  }
 }
 
 async function runAggregate() {
+  log('Aggregate\u2026', 'info');
+  setBusy('btn-aggregate', 'Aggregating\u2026');
   try {
-    const d = await post('/aggregate', 'Aggregate');
-    log(`✓ Aggregate: ${d.intervals} intervals  ${d.from?.slice(0,10)} → ${d.to?.slice(0,10)}`, 'ok');
-  } catch {}
+    const d = await post('/aggregate');
+    log(`\u2713 Aggregate: ${d.intervals} intervals  ${d.from?.slice(0,10)} \u2192 ${d.to?.slice(0,10)}`, 'ok');
+  } catch(e) {
+    log(`\u2717 Aggregate failed: ${e.message}`, 'err');
+  } finally {
+    setIdle();
+  }
 }
 
 async function runSimulate() {
-  log('Simulating…', 'info'); disableButtons(true);
+  log('Simulating\u2026', 'info');
+  setBusy('btn-simulate', 'Simulating\u2026');
   try {
     const d = await (await fetch(`${API}/simulate`)).json();
     if (!d.success) throw new Error(d.error);
-    log(`✓ Simulation complete — ${d.comparison?.length} tariff(s)`, 'ok');
-    renderComparison(d); showResultMeta(d);
-  } catch(e) { log(`✗ Simulate failed: ${e.message}`, 'err'); }
-  finally { disableButtons(false); }
+    log(`\u2713 Simulation complete \u2014 ${d.comparison?.length} tariff(s)`, 'ok');
+    renderComparison(d);
+    showResultMeta(d);
+  } catch(e) {
+    log(`\u2717 Simulate failed: ${e.message}`, 'err');
+  } finally {
+    setIdle();
+  }
 }
 
 async function runFull() {
   const range = getDateRange();
   const label = range.date_from && range.date_to
-    ? `Full pipeline (${range.date_from} → ${range.date_to})`
+    ? `Full pipeline (${range.date_from} \u2192 ${range.date_to})`
     : 'Full pipeline';
-  log(`Starting ${label}…`, 'info'); disableButtons(true);
+  log(`Starting ${label}\u2026`, 'info');
+  setBusy('btn-run', 'Running\u2026');
   try {
-    const r = await fetch(`${API}/run`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(range),
-    });
-    const d = await r.json();
-    if (!d.success) throw new Error(d.error);
-    log(`✓ Pipeline complete — ${d.comparison?.length} tariff(s)`, 'ok');
-    renderComparison(d); showResultMeta(d);
-  } catch(e) { log(`✗ Pipeline failed: ${e.message}`, 'err'); }
-  finally { disableButtons(false); }
+    const d = await post('/run', range);
+    log(`\u2713 Pipeline complete \u2014 ${d.comparison?.length} tariff(s)`, 'ok');
+    renderComparison(d);
+    showResultMeta(d);
+  } catch(e) {
+    log(`\u2717 Pipeline failed: ${e.message}`, 'err');
+  } finally {
+    setIdle();
+  }
 }
 
 function showResultMeta(d) {
@@ -440,15 +520,15 @@ function renderComparison(data) {
     const isBaseline = t.tariff_id === baseline_id;
     const diff = t.diff_vs_baseline_gbp;
     const diffStr = isBaseline
-      ? '<span class="tag tag-baseline">★ Current</span>'
-      : diff < 0 ? `<span class="tag tag-save">Save £${Math.abs(diff).toFixed(2)}</span>`
-                 : `<span class="tag tag-cost">+£${diff.toFixed(2)}</span>`;
+      ? '<span class="tag tag-baseline">\u2605 Current</span>'
+      : diff < 0 ? `<span class="tag tag-save">Save \u00a3${Math.abs(diff).toFixed(2)}</span>`
+                 : `<span class="tag tag-cost">+\u00a3${diff.toFixed(2)}</span>`;
     return `<tr class="${isBaseline ? 'row-baseline' : ''}">
       <td><strong>${t.tariff_name}</strong></td>
-      <td>£${t.total_net_cost_gbp.toFixed(2)}</td>
+      <td>\u00a3${t.total_net_cost_gbp.toFixed(2)}</td>
       <td>${t.total_import_kwh.toFixed(1)} kWh</td>
       <td>${t.total_export_kwh.toFixed(1)} kWh</td>
-      <td>£${(t.total_standing_p/100).toFixed(2)}</td>
+      <td>\u00a3${(t.total_standing_p/100).toFixed(2)}</td>
       <td>${diffStr}</td>
     </tr>`;
   }).join('');
@@ -458,7 +538,7 @@ function renderComparison(data) {
       <div class="metric">
         <div class="label">Period</div>
         <div class="value" style="font-size:15px">${baseline.date_from}</div>
-        <div class="sub">→ ${baseline.date_to}</div>
+        <div class="sub">\u2192 ${baseline.date_to}</div>
       </div>
       <div class="metric">
         <div class="label">Intervals</div>
@@ -467,13 +547,13 @@ function renderComparison(data) {
       </div>
       <div class="metric">
         <div class="label">Current Tariff Cost</div>
-        <div class="value">£${baseline.total_net_cost_gbp.toFixed(2)}</div>
+        <div class="value">\u00a3${baseline.total_net_cost_gbp.toFixed(2)}</div>
         <div class="sub">${baseline.tariff_name}</div>
       </div>
       ${maxSaving !== null ? `<div class="metric best">
         <div class="label">Best Saving Available</div>
-        <div class="value ${maxSaving < 0 ? 'diff-neg' : ''}">${maxSaving < 0 ? '−£'+Math.abs(maxSaving).toFixed(2) : '—'}</div>
-        <div class="sub">vs current · ${cheapest.tariff_name}</div>
+        <div class="value ${maxSaving < 0 ? 'diff-neg' : ''}">${maxSaving < 0 ? '\u2212\u00a3'+Math.abs(maxSaving).toFixed(2) : '\u2014'}</div>
+        <div class="sub">vs current \u00b7 ${cheapest.tariff_name}</div>
       </div>` : ''}
     </div>
     <table>
@@ -490,7 +570,7 @@ async function loadDetail() {
   if (!tariff) return;
 
   document.getElementById('detail-content').innerHTML =
-    '<span style="color:var(--muted)"><span id="spinner"></span>Loading…</span>';
+    '<span style="color:var(--muted)">Loading\u2026</span>';
 
   try {
     const d = await (await fetch(`${API}/results/${view}?tariff=${tariff}`)).json();
@@ -512,7 +592,7 @@ async function loadDetail() {
         <td>${((r.import_cost_p??0)/100).toFixed(2)}</td>
         <td>${((r.export_credit_p??0)/100).toFixed(2)}</td>
         <td>${((r.standing_p??0)/100).toFixed(2)}</td>
-        <td><strong>£${(r.net_cost_gbp??0).toFixed(2)}</strong></td>
+        <td><strong>\u00a3${(r.net_cost_gbp??0).toFixed(2)}</strong></td>
       </tr>`).join('');
 
     } else if (view === 'monthly') {
@@ -527,7 +607,7 @@ async function loadDetail() {
           <td>${((r.import_cost_p??0)/100).toFixed(2)}</td>
           <td>${((r.export_credit_p??0)/100).toFixed(2)}</td>
           <td>${((r.standing_p??0)/100).toFixed(2)}</td>
-          <td><strong>£${(r.net_cost_gbp??0).toFixed(2)}</strong></td>
+          <td><strong>\u00a3${(r.net_cost_gbp??0).toFixed(2)}</strong></td>
         </tr>`;
       }).join('');
 
@@ -543,7 +623,7 @@ async function loadDetail() {
           <td>${((r.import_cost_p??0)/100).toFixed(2)}</td>
           <td>${((r.export_credit_p??0)/100).toFixed(2)}</td>
           <td>${((r.standing_p??0)/100).toFixed(2)}</td>
-          <td><strong>£${(r.net_cost_gbp??0).toFixed(2)}</strong></td>
+          <td><strong>\u00a3${(r.net_cost_gbp??0).toFixed(2)}</strong></td>
         </tr>`;
       }).join('');
     }
@@ -553,7 +633,7 @@ async function loadDetail() {
         <thead><tr>
           <th>${colHeader}</th>
           <th>Import kWh</th><th>Export kWh</th>
-          <th>Import £</th><th>Export £</th><th>Standing £</th><th>Net £</th>
+          <th>Import \u00a3</th><th>Export \u00a3</th><th>Standing \u00a3</th><th>Net \u00a3</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
@@ -562,12 +642,10 @@ async function loadDetail() {
   }
 }
 
-function disableButtons(state) { document.querySelectorAll('button').forEach(b => b.disabled = state); }
-
 // ── Init ──────────────────────────────────────────────────────────────────
 
 initDateRange();
-checkHealth();           // triggers version check on first response
+checkHealth();
 loadSavedResults();
 setInterval(checkHealth, 30000);
 </script>

@@ -656,8 +656,15 @@ def sa_import_start():
     """
     Start the import as a fire-and-forget background thread.
     Returns immediately with 200 — the UI polls /api/sa-import/status for progress.
-    This replaces the old SSE stream endpoint as the import trigger, eliminating
-    the persistent long-lived HTTP connection that was adding unnecessary load.
+
+    Accepted JSON body fields:
+      mode         "custom" (default) or "full"
+                   custom: passes --topics-from-settings pointing at settings.yaml,
+                           so only the topics required by the simulator are imported.
+                   full:   no topic filter — all mapped Solar Assistant measurements
+                           are imported.
+      range_start  Optional ISO date string (YYYY-MM-DD).  When supplied, only data
+                   on or after this date is imported.
     """
     global _sa_import_running, _sa_import_state
 
@@ -685,15 +692,33 @@ def sa_import_start():
         _sa_import_log_buffer.clear()
 
     body        = request.get_json(force=True, silent=True) or {}
+    mode        = (body.get('mode') or 'custom').strip().lower()
     range_start = (body.get('range_start') or '').strip()
 
     script = os.path.abspath(
         os.path.join(os.path.dirname(__file__), '..', 'scripts', 'sa_import.py')
     )
+    settings_path = os.path.abspath(_SETTINGS_PATH)
+
     env = os.environ.copy()
     env['PYTHONUNBUFFERED'] = '1'
 
-    cmd = ['python3', script, zip_path]
+    # --yes skips the interactive confirmation prompt — essential when running
+    # as a non-interactive background subprocess (no TTY, stdin is /dev/null).
+    # Without this flag the script reads EOF from stdin and cancels immediately,
+    # which is why the import previously completed instantly with 0 records.
+    cmd = ['python3', script, zip_path, '--yes']
+
+    # Apply the import mode selected in the UI
+    if mode == 'custom':
+        # Custom import: restrict to only the topics needed by the simulator,
+        # read from the mqtt.topics section of settings.yaml
+        cmd += ['--topics-from-settings', settings_path]
+        log.info('SA import mode: custom (topics from %s)', settings_path)
+    else:
+        # Full import: no topic filter — all mapped measurements are written
+        log.info('SA import mode: full')
+
     if range_start:
         cmd += ['--range-start', range_start + 'T00:00:00']
 
