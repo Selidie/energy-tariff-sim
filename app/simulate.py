@@ -120,16 +120,32 @@ def total_summary(detail_df: pd.DataFrame, tariff) -> dict:
         'day_import_cost_p':       round(detail_df['day_import_cost_p'].sum(), 2),
         'night_import_cost_p':     round(detail_df['night_import_cost_p'].sum(), 2),
     }
+    from app.tariffs import OctopusFlatTariff, OctopusTimeOfUseTariff
+
     if is_day_night:
-        summary['day_rate_p']    = tariff._day_rate
-        summary['night_rate_p']  = tariff._night_rate
-        summary['night_start']   = tariff._night_start.strftime('%H:%M')
-        summary['night_end']     = tariff._night_end.strftime('%H:%M')
-        summary['export_rate_p'] = tariff._export_rate
+        summary['day_rate_p']        = tariff._day_rate
+        summary['night_rate_p']      = tariff._night_rate
+        summary['night_start']       = tariff._night_start.strftime('%H:%M')
+        summary['night_end']         = tariff._night_end.strftime('%H:%M')
+        summary['export_rate_p']     = tariff._export_rate
         summary['standing_charge_p'] = tariff.standing_charge
+    elif isinstance(tariff, OctopusFlatTariff):
+        summary['flat_rate_p']       = tariff._import_rate
+        summary['export_rate_p']     = tariff._export_rate
+        summary['standing_charge_p'] = tariff.standing_charge
+        summary['product_code']      = tariff.product_code
+        summary['tariff_code']       = tariff.tariff_code
+        summary['gsp_region']        = tariff.gsp_region
+    elif isinstance(tariff, OctopusTimeOfUseTariff):
+        summary['slot_count']        = len(tariff._slots)
+        summary['export_rate_p']     = tariff._export_rate
+        summary['standing_charge_p'] = tariff.standing_charge
+        summary['product_code']      = tariff.product_code
+        summary['tariff_code']       = tariff.tariff_code
+        summary['gsp_region']        = tariff.gsp_region
     else:
-        summary['flat_rate_p']   = getattr(tariff, '_import_rate', None)
-        summary['export_rate_p'] = tariff._export_rate
+        summary['flat_rate_p']       = getattr(tariff, '_import_rate', None)
+        summary['export_rate_p']     = tariff._export_rate
         summary['standing_charge_p'] = tariff.standing_charge
 
     return summary
