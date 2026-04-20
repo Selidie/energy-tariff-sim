@@ -45,10 +45,14 @@ Settings can be edited directly in the file or via the **Config UI** at `http://
 mqtt:
   api_url: "http://mqtt-bridge:5003"
   topics:
-    grid_power: "inverter_1/grid_power/state"   # required — W, +import / -export
+    grid_power:   "inverter_1/grid_power/state"    # required — W, +import / -export
+    pv_power:     "inverter_1/pv_power/state"      # optional — solar generation W
+    battery_power: "total/battery_power/state"     # optional — battery W
+    load_power:   "inverter_1/load_power/state"    # optional — site load W
 ```
 
-Only `grid_power` is required. The mqtt-bridge prefix (e.g. `solar_assistant`) is resolved automatically by the bridge.
+Only `grid_power` is required. pv_power, battery_power, and load_power are optional and used for richer diagnostics.
+The mqtt-bridge prefix (e.g. `solar_assistant`) is resolved automatically by the bridge.
 
 Topic names must match **exactly** what the live mqtt-bridge records in InfluxDB. The bridge strips the MQTT prefix (e.g. `solar_assistant/`) and stores the remainder as the `topic` tag. Solar Assistant publishes per-inverter readings on `inverter_1/...` topics, so both live data and historical imports must use the same names.
 
@@ -104,6 +108,13 @@ tariffs:
       end:   "07:00"
 ```
 
+Octopus Energy tariffs are not hand-written in settings.yaml — they are fetched live from the Octopus Energy public API via the Config UI at /config. Two types are supported:
+
+octopus_flat — a single static import rate; behaves like a flat tariff once imported
+octopus_agile — per-half-hour slot rates (e.g. Agile, Go); the simulator uses binary search for efficient lookup across large date ranges
+
+Rates are cached in data/octopus_cache/ (TTL controlled by OCTOPUS_CACHE_TTL).
+
 The night window handles midnight wrap-around automatically (e.g. `00:00–07:00`).  
 Add as many tariffs as you like. The tariff whose `id` matches `baseline_tariff_id` is listed first and used as the comparison reference.
 
@@ -127,7 +138,7 @@ Open `http://localhost:5011/config` to edit settings through a form:
 - Timezone
 - Baseline tariff selection
 - Add, edit, or remove tariffs (flat or day/night)
-- Import Octopus Energy Tarrifs
+- Import Octopus Energy Tariffs
 
 Changes are saved back to `config/settings.yaml` and take effect immediately — no restart needed.
 
@@ -188,6 +199,22 @@ When `date_from` / `date_to` are supplied they override `history_range`. The bri
 
 ---
 
+## Simulation output fields
+
+Each tariff result includes `daily`, `monthly`, and `yearly` arrays. Key fields per record:
+
+| Field | Unit | Description |
+|-------|------|-------------|
+| `import_kwh` | kWh | Total grid import |
+| `export_kwh` | kWh | Total grid export |
+| `day_import_kwh` | kWh | Import during day-rate hours (day/night tariffs only) |
+| `night_import_kwh` | kWh | Import during night-rate hours (day/night tariffs only) |
+| `import_cost_p` | pence | Gross import cost |
+| `export_credit_p` | pence | Export earnings |
+| `standing_p` | pence | Standing charge for the period |
+| `net_cost_p` | pence | Net cost (import − export + standing) |
+| `net_cost_gbp` | £ | Net cost in pounds |
+
 ## Results persistence
 
 After every `/run` or `/simulate` call, results are saved to `data/results.json`. When the UI loads it restores the last run automatically — so results survive a page refresh or container restart without needing to re-ingest.
@@ -247,34 +274,18 @@ services:
     depends_on:
       - mqtt-bridge
 ```
-
 ---
 
-## Development
+## Environment Variables
 
-### Requirements
-
-- Python 3.11+
-- Flask, pandas, pyarrow, pyyaml, requests, influxdb-client
-
-```bash
-pip install -r requirements.txt
-python -m app.api
-# Open http://localhost:5011
-```
-
-**Requires:** mqtt-bridge running on port 5003 with InfluxDB enabled.
-
-The dev rebuild script handles versioning, networking, and host-gateway setup automatically:
-
-```bash
-# From the workspace root
-./dev-rebuild.sh energy-tariff-sim
-
-# Full clean rebuild
-./dev-rebuild.sh energy-tariff-sim --no-cache
-```
-
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `INFLUX_URL` | — | InfluxDB 2.x base URL (e.g. `http://influxdb:8086`) |
+| `INFLUX_TOKEN` | — | InfluxDB authentication token |
+| `INFLUX_ORG` | — | InfluxDB organisation name |
+| `INFLUX_BUCKET` | — | InfluxDB bucket name |
+| `OCTOPUS_CACHE_DIR` | `/app/data/octopus_cache` | Directory for caching Octopus API responses |
+| `OCTOPUS_CACHE_TTL` | `3600` | Cache TTL in seconds (default: 1 hour) |
 ---
 
 ## File layout
@@ -289,7 +300,11 @@ energy-tariff-sim/
 │   ├── aggregate.py      # W readings → 30-min kWh intervals
 │   ├── tariffs.py        # FlatTariff, DayNightTariff, factory
 │   ├── simulate.py       # Cost simulation, daily/monthly/yearly summaries
-│   ├── octopus_client.py # Imports Octopus Energy Tarrifs
+│   ├── octopus_client.py # Imports Octopus Energy Tariffs
+│   ├── main.py           # Application entry point
+│   ├── models.py         # Shared data models
+│   ├── aggregator.py     # Aggregation runner / wrapper
+│   ├── simulator.py      # Simulation runner / wrapper
 │   ├── ui.html           # Main web UI (self-contained)
 │   └── config.html       # Config editor UI (self-contained)
 ├── config/
@@ -297,7 +312,7 @@ energy-tariff-sim/
 ├── data/
 │   ├── raw/            # Raw Parquet files from ingest
 │   ├── aggregated/     # 30-min interval Parquet files
-│   ├── octopus_cache   # Cached Octopus Energy Tarrifs
+│   ├── octopus_cache   # Cached Octopus Energy Tariffs
 │   └── results.json    # Last simulation results (persisted)
 ├── scripts/
 │   ├── README.md       # Full Solar Assistant import guide
