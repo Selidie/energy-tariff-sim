@@ -127,6 +127,7 @@ Open `http://localhost:5011/config` to edit settings through a form:
 - Timezone
 - Baseline tariff selection
 - Add, edit, or remove tariffs (flat or day/night)
+- Import Octopus Energy Tarrifs
 
 Changes are saved back to `config/settings.yaml` and take effect immediately — no restart needed.
 
@@ -134,7 +135,7 @@ Changes are saved back to `config/settings.yaml` and take effect immediately —
 
 ## Solar Assistant Backup Import
 
-If you have a Solar Assistant backup and want to backfill InfluxDB with historical data, use the **Config UI** import panel at `http://localhost:5011/config`. Upload your backup `.zip`, optionally set a start date, and click **Start Import**.
+If you have a Solar Assistant backup and want to backfill InfluxDB with historical data, use the **Config UI** import panel at `http://localhost:5011/config`. Upload your backup `.zip`, optionally set a start date, select an import profile (Custom, All), and click **Start Import**.
 
 > ⚠️ Imports can take several hours depending on data volume. A typical Solar Assistant installation logging at 10-second intervals generates approximately:
 > - **1 day** → ~285,000 data points
@@ -154,9 +155,6 @@ Topic names written by the import match the live mqtt-bridge schema (`inverter_1
 | GET | `/` | Main web UI |
 | GET | `/config` | Config editor UI |
 | GET | `/health` | Service status, bridge connectivity, tariff list |
-| POST | `/run` | Full pipeline: ingest → aggregate → simulate. Accepts optional `date_from` / `date_to` (JSON body) |
-| POST | `/ingest` | Fetch from mqtt-bridge, save raw Parquet. Accepts optional `date_from` / `date_to` |
-| POST | `/aggregate` | Convert raw Parquet → 30-min kWh intervals |
 | GET | `/simulate` | Re-simulate against stored aggregated data (no new ingest) |
 | GET | `/compare` | Comparison table only (no new simulation) |
 | GET | `/results/daily?tariff=<id>` | Daily breakdown for one tariff |
@@ -164,16 +162,19 @@ Topic names written by the import match the live mqtt-bridge schema (`inverter_1
 | GET | `/results/yearly?tariff=<id>` | Yearly breakdown for one tariff |
 | GET | `/tariffs` | List all configured tariffs |
 | GET | `/api/config` | Get current settings.yaml as JSON |
-| POST | `/api/config` | Save updated settings (reloads config + tariffs live) |
 | GET | `/api/results` | Load last saved simulation results from disk |
-| DELETE | `/api/results` | Clear saved results |
 | GET | `/api/bridge/topics` | All topics seen by mqtt-bridge |
 | GET | `/api/bridge/topics/numeric` | Numeric topics only |
 | GET | `/api/bridge/diagnose` | Full bridge diagnostic — MQTT status, InfluxDB, topic mapping |
-| POST | `/api/sa-import/upload` | Upload a Solar Assistant backup `.zip` |
 | GET | `/api/sa-import/stream` | Start and stream the import process (SSE) |
 | GET | `/api/sa-import/status` | Poll import progress |
 | POST | `/api/sa-import/clear` | Clear the uploaded backup file |
+| POST | `/run` | Full pipeline: ingest → aggregate → simulate. Accepts optional `date_from` / `date_to` (JSON body) |
+| POST | `/ingest` | Fetch from mqtt-bridge, save raw Parquet. Accepts optional `date_from` / `date_to` |
+| POST | `/aggregate` | Convert raw Parquet → 30-min kWh intervals |
+| POST | `/api/config` | Save updated settings (reloads config + tariffs live) |
+| POST | `/api/sa-import/upload` | Upload a Solar Assistant backup `.zip` |
+| DELETE | `/api/results` | Clear saved results |
 
 ### Date range on `/run` and `/ingest`
 
@@ -282,19 +283,21 @@ The dev rebuild script handles versioning, networking, and host-gateway setup au
 energy-tariff-sim/
 ├── app/
 │   ├── __init__.py
-│   ├── api.py          # Flask app + all REST endpoints
-│   ├── config.py       # YAML loader + validation
-│   ├── ingest.py       # mqtt-bridge /history → raw Parquet
-│   ├── aggregate.py    # W readings → 30-min kWh intervals
-│   ├── tariffs.py      # FlatTariff, DayNightTariff, factory
-│   ├── simulate.py     # Cost simulation, daily/monthly/yearly summaries
-│   ├── ui.html         # Main web UI (self-contained)
-│   └── config.html     # Config editor UI (self-contained)
+│   ├── api.py            # Flask app + all REST endpoints
+│   ├── config.py         # YAML loader + validation
+│   ├── ingest.py         # mqtt-bridge /history → raw Parquet
+│   ├── aggregate.py      # W readings → 30-min kWh intervals
+│   ├── tariffs.py        # FlatTariff, DayNightTariff, factory
+│   ├── simulate.py       # Cost simulation, daily/monthly/yearly summaries
+│   ├── octopus_client.py # Imports Octopus Energy Tarrifs
+│   ├── ui.html           # Main web UI (self-contained)
+│   └── config.html       # Config editor UI (self-contained)
 ├── config/
 │   └── settings.yaml   # All runtime configuration
 ├── data/
 │   ├── raw/            # Raw Parquet files from ingest
 │   ├── aggregated/     # 30-min interval Parquet files
+│   ├── octopus_cache   # Cached Octopus Energy Tarrifs
 │   └── results.json    # Last simulation results (persisted)
 ├── scripts/
 │   ├── README.md       # Full Solar Assistant import guide

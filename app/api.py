@@ -39,9 +39,101 @@ _SETTINGS_PATH = os.environ.get(
 
 APP_VERSION = os.environ.get('APP_VERSION', 'dev')
 
+_OCTO_CACHE_PATH = os.environ.get(
+    'OCTO_CACHE_PATH',
+    os.path.join(os.path.dirname(__file__), '..', 'data', 'octopus_tariffs.json')
+)
+
+
+def _save_octo_tariffs():
+    """Persist all in-memory Octopus tariffs to disk as JSON."""
+    from app.tariffs import OctopusFlatTariff, OctopusTimeOfUseTariff
+    octo = [t.to_dict() for t in _tariffs
+            if isinstance(t, (OctopusFlatTariff, OctopusTimeOfUseTariff))]
+    try:
+        os.makedirs(os.path.dirname(_OCTO_CACHE_PATH), exist_ok=True)
+        with open(_OCTO_CACHE_PATH, 'w') as f:
+            json.dump(octo, f)
+        log.info('Saved %d Octopus tariff(s) to %s', len(octo), _OCTO_CACHE_PATH)
+    except Exception as e:
+        log.warning('Could not save Octopus tariffs: %s', e)
+
+
+def _load_octo_tariffs() -> list:
+    """Reload persisted Octopus tariffs from disk and return as tariff objects."""
+    from app.tariffs import OctopusFlatTariff, OctopusTimeOfUseTariff
+    try:
+        with open(_OCTO_CACHE_PATH, 'r') as f:
+            entries = json.load(f)
+    except FileNotFoundError:
+        return []
+    except Exception as e:
+        log.warning('Could not load Octopus tariffs: %s', e)
+        return []
+
+    loaded = []
+    for entry in entries:
+        try:
+            ttype = entry.get('type')
+            if ttype == 'octopus_flat':
+                # Reconstruct a minimal cfg dict OctopusFlatTariff expects
+                cfg = {
+                    'id':             entry['id'],
+                    'name':           entry['name'],
+                    'standing_charge': entry.get('standing_charge', 0),
+                    'export_rate':    entry.get('export_rate', 0),
+                    'import_rate':    entry.get('import_rate', 0),
+                    'product_code':   entry.get('product_code', ''),
+                    'tariff_code':    entry.get('tariff_code', ''),
+                    'gsp_region':     entry.get('gsp_region', ''),
+                }
+                loaded.append(OctopusFlatTariff(cfg))
+            elif ttype == 'octopus_agile':
+                # For time-of-use tariffs we need the raw rates — stored in
+                # the octopus_client cache, so re-fetch from there
+                from app import octopus_client as _octo
+                from datetime import datetime as _dt, timezone as _tz_mod
+                product_code = entry.get('product_code', '')
+                tariff_code  = entry.get('tariff_code', '')
+                gsp_region   = entry.get('gsp_region', '')
+                today        = _dt.now(_tz_mod.utc)
+                days         = _parse_history_days(_history_range())
+                date_from    = _dt(today.year - (days // 365),
+                                   today.month, today.day, tzinfo=_tz_mod.utc)
+                rates = _octo.get_tariff_unit_rates(
+                    product_code, tariff_code, date_from, today)
+                cfg = {
+                    'id':             entry['id'],
+                    'name':           entry['name'],
+                    'standing_charge': entry.get('standing_charge', 0),
+                    'export_rate':    entry.get('export_rate', 0),
+                    'rates':          rates,
+                    'product_code':   product_code,
+                    'tariff_code':    tariff_code,
+                    'gsp_region':     gsp_region,
+                }
+                loaded.append(OctopusTimeOfUseTariff(cfg))
+        except Exception as e:
+            log.warning('Could not restore Octopus tariff %s: %s', entry.get('id'), e)
+
+    log.info('Restored %d Octopus tariff(s) from %s', len(loaded), _OCTO_CACHE_PATH)
+    return loaded
+
+
+def _reload_tariffs():
+    """Reload standard tariffs from settings, then re-append persisted Octopus tariffs."""
+    global _cfg, _tariffs
+    _cfg     = cfg_module.load(_SETTINGS_PATH)
+    _tariffs = load_tariffs(_cfg)
+    octo     = _load_octo_tariffs()
+    # Merge: skip any whose id already exists (shouldn't happen, but be safe)
+    existing_ids = {t.id for t in _tariffs}
+    _tariffs += [t for t in octo if t.id not in existing_ids]
+
 try:
     _cfg     = cfg_module.load(_SETTINGS_PATH)
     _tariffs = load_tariffs(_cfg)
+    _tariffs += _load_octo_tariffs()
     log.info('Loaded %d tariff(s) from %s', len(_tariffs), _SETTINGS_PATH)
 except Exception as _boot_err:
     log.error('FATAL: Could not load config at startup: %s', _boot_err)
@@ -144,6 +236,17 @@ def get_config():
     try:
         with open(_SETTINGS_PATH, 'r') as f:
             raw = yaml.safe_load(f)
+
+        # Append any in-memory Octopus tariffs so the UI can restore them
+        # after a page navigation (they are not written to settings.yaml)
+        from app.tariffs import OctopusFlatTariff, OctopusTimeOfUseTariff
+        octo_tariffs = [
+            t.to_dict() for t in _tariffs
+            if isinstance(t, (OctopusFlatTariff, OctopusTimeOfUseTariff))
+        ]
+        if octo_tariffs:
+            raw.setdefault('octopus_tariffs', octo_tariffs)
+
         return jsonify({'success': True, 'config': raw})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -334,8 +437,7 @@ def aggregate():
 def run_all():
     global _cfg, _tariffs
     try:
-        _cfg     = cfg_module.load(_SETTINGS_PATH)
-        _tariffs = load_tariffs(_cfg)
+        _reload_tariffs()
         body = request.get_json(force=True, silent=True) or {}
         date_from, date_to = _extract_date_range(body)
         raw_df, diag = run_ingest(_cfg, date_from=date_from, date_to=date_to)
@@ -451,6 +553,263 @@ def _get_tariff(tariff_id):
         return _tariffs[0] if _tariffs else None
     return next((t for t in _tariffs if t.id == tariff_id), None)
 
+# ── Octopus Energy API  (Phase 1 — public endpoints, no auth required) ────
+
+from app import octopus_client as _octo
+from datetime import datetime as _dt, timezone as _tz_mod
+
+
+def _octopus_cfg() -> dict:
+    """Return the octopus sub-section of settings, or {} if absent."""
+    return _cfg.get("octopus", {})
+
+_GSP_REGION_LABELS = {
+    '_A': 'East England',
+    '_B': 'East Midlands',
+    '_C': 'Lincolnshire / East Midlands',
+    '_D': 'London',
+    '_E': 'Merseyside / North Wales',
+    '_F': 'Midlands',
+    '_G': 'North West',
+    '_H': 'South East',
+    '_J': 'South',
+    '_K': 'South West',
+    '_L': 'Yorkshire',
+    '_M': 'North Scotland',
+    '_N': 'South Scotland',
+    '_P': 'North Wales / Mersey',
+}
+
+@app.get("/api/octopus/products")
+def octopus_products():
+    """
+    List available Octopus electricity products.
+
+    Query params:
+      ?brand=OCTOPUS_ENERGY   (default; pass empty string for all brands)
+    """
+    try:
+        brand = request.args.get("brand", "OCTOPUS_ENERGY") or None
+        products = _octo.list_products(brand=brand)
+        return jsonify({"success": True, "count": len(products), "products": products})
+    except Exception as e:
+        log.exception("octopus_products failed")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.get("/api/octopus/products/<product_code>")
+def octopus_product_detail(product_code):
+    """
+    Return full detail for one product, including regional tariff codes.
+    """
+    try:
+        detail = _octo.get_product_detail(product_code)
+        return jsonify({"success": True, "product": detail})
+    except Exception as e:
+        log.exception("octopus_product_detail failed for %s", product_code)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.get("/api/octopus/products/<product_code>/tariff-codes")
+def octopus_tariff_codes(product_code):
+    """
+    Return a map of GSP region -> tariff code for a product.
+    Useful for letting the user pick their region in the UI.
+
+    Response shape:
+      { "success": true,
+        "regions": { "_A": "E-1R-...-A", "_C": "E-1R-...-C", ... } }
+    """
+    try:
+        detail  = _octo.get_product_detail(product_code)
+        regional = detail.get("single_register_electricity_tariffs", {})
+        regions  = {}
+        for suffix, payment_types in regional.items():
+            ddc = payment_types.get("direct_debit_monthly", {})
+            if "code" in ddc:
+                regions[suffix] = ddc["code"]
+        return jsonify({"success": True, "product_code": product_code, "regions": regions})
+    except Exception as e:
+        log.exception("octopus_tariff_codes failed for %s", product_code)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.post("/api/octopus/import-tariff")
+def octopus_import_tariff():
+    """
+    Fetch rates from the Octopus API for a given product + region and add
+    the tariff to the current simulation config in memory (and optionally
+    persist it to settings.yaml if persist=true is passed).
+
+    Expected JSON body:
+      {
+        "product_code": "AGILE-24-10-01",
+        "tariff_code":  "E-1R-AGILE-24-10-01-C",   // optional — resolved from region if absent
+        "gsp_region":   "_C",                        // optional, default "_C"
+        "date_from":    "2024-01-01",                // optional — defaults to configured history_range
+        "date_to":      "2024-12-31",                // optional — defaults to today
+        "persist":      false                        // optional — write to settings.yaml
+      }
+
+    On success, the tariff is appended to _tariffs in memory and is
+    immediately available for simulation via /run or /simulate.
+    """
+    global _tariffs
+    try:
+        body = request.get_json(force=True) or {}
+
+        product_code = body.get("product_code", "").strip()
+        if not product_code:
+            return jsonify({"success": False, "error": "product_code is required"}), 400
+
+        gsp_region  = body.get("gsp_region", "_C").strip()
+        tariff_code = body.get("tariff_code", "").strip()
+
+        # Resolve tariff code from product detail if not supplied
+        if not tariff_code:
+            detail      = _octo.get_product_detail(product_code)
+            tariff_code = _octo.resolve_tariff_code(detail, gsp_region)
+            if not tariff_code:
+                return jsonify({
+                    "success": False,
+                    "error": f"Could not resolve tariff code for {product_code} / {gsp_region}"
+                }), 400
+
+        # Determine date range
+        today = _dt.now(_tz_mod.utc)
+        if body.get("date_to"):
+            date_to = _dt.fromisoformat(body["date_to"]).replace(tzinfo=_tz_mod.utc)
+        else:
+            date_to = today
+
+        if body.get("date_from"):
+            date_from = _dt.fromisoformat(body["date_from"]).replace(tzinfo=_tz_mod.utc)
+        else:
+            # Fall back to the configured history_range
+            days = _parse_history_days(_history_range())
+            date_from = _dt(today.year - (days // 365),
+                            today.month, today.day, tzinfo=_tz_mod.utc)
+
+        # Fetch rates and standing charges
+        rates    = _octo.get_tariff_unit_rates(product_code, tariff_code, date_from, date_to)
+        standing = _octo.get_tariff_standing_charges(product_code, tariff_code, date_from, date_to)
+
+        if not rates:
+            return jsonify({
+                "success": False,
+                "error": "No unit rates returned from Octopus API for the requested period"
+            }), 502
+
+        # Determine standing charge — use the most recent entry
+        standing_charge_p = 0.0
+        if standing:
+            standing.sort(key=lambda x: x.get("valid_from", ""), reverse=True)
+            standing_charge_p = float(standing[0].get("value_inc_vat", 0.0))
+
+        # Determine tariff type: if there's only one rate entry it's effectively flat
+        unique_rates = set(r.get("value_inc_vat") for r in rates)
+        is_flat = len(unique_rates) <= 2   # 1 or 2 rates = flat or day-rate, not Agile
+
+        # Build a display name from the product detail
+        try:
+            detail_name = _octo.get_product_detail(product_code).get("display_name", product_code)
+        except Exception:
+            detail_name = product_code
+
+        tariff_id = _slugify(f"octo_{product_code}_{gsp_region}")
+
+        if is_flat:
+            from app.tariffs import OctopusFlatTariff
+            avg_rate = sum(unique_rates) / len(unique_rates)
+            tariff_cfg = {
+                "id":             tariff_id,
+                "name":           f"{detail_name} ({gsp_region})",
+                "standing_charge": standing_charge_p,
+                "export_rate":    0.0,
+                "import_rate":    avg_rate,
+                "product_code":   product_code,
+                "tariff_code":    tariff_code,
+                "gsp_region":     gsp_region,
+            }
+            new_tariff = OctopusFlatTariff(tariff_cfg)
+        else:
+            from app.tariffs import OctopusTimeOfUseTariff
+            tariff_cfg = {
+                "id":             tariff_id,
+                "name":           f"{detail_name} ({_GSP_REGION_LABELS.get(gsp_region, gsp_region)})",
+                "standing_charge": standing_charge_p,
+                "export_rate":    0.0,
+                "rates":          rates,
+                "product_code":   product_code,
+                "tariff_code":    tariff_code,
+                "gsp_region":     gsp_region,
+            }
+            new_tariff = OctopusTimeOfUseTariff(tariff_cfg)
+
+        # Replace if already loaded (re-import with new dates), otherwise append
+        _tariffs = [t for t in _tariffs if t.id != tariff_id]
+        _tariffs.append(new_tariff)
+
+        log.info("Imported Octopus tariff %s (%s) — %d rate slots, standing %.2fp/day",
+                 tariff_id, tariff_code, len(rates), standing_charge_p)
+
+        _save_octo_tariffs()
+
+        return jsonify({
+            "success":          True,
+            "tariff_id":        tariff_id,
+            "tariff_code":      tariff_code,
+            "product_code":     product_code,
+            "gsp_region":       gsp_region,
+            "rate_slots":       len(rates),
+            "is_agile":         not is_flat,
+            "standing_charge_p": standing_charge_p,
+            "date_from":        date_from.date().isoformat(),
+            "date_to":          date_to.date().isoformat(),
+        })
+
+    except requests.exceptions.ConnectionError as e:
+        return jsonify({"success": False, "error": f"Could not reach Octopus API: {e}"}), 502
+    except requests.exceptions.HTTPError as e:
+        return jsonify({"success": False, "error": f"Octopus API error: {e}"}), 502
+    except Exception as e:
+        log.exception("octopus_import_tariff failed")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.delete("/api/octopus/tariff/<tariff_id>")
+def octopus_remove_tariff(tariff_id):
+    """Remove a previously imported Octopus tariff from the in-memory list."""
+    global _tariffs
+    before = len(_tariffs)
+    _tariffs = [t for t in _tariffs if t.id != tariff_id]
+    removed = before - len(_tariffs)
+    _save_octo_tariffs()
+    return jsonify({"success": True, "removed": removed})
+
+
+@app.delete("/api/octopus/cache")
+def octopus_clear_cache():
+    """Delete all locally cached Octopus API responses."""
+    try:
+        removed = _octo.clear_cache()
+        return jsonify({"success": True, "files_removed": removed})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+def _parse_history_days(history_range: str) -> int:
+    """Convert a history_range string like '700d' or '1m' to days."""
+    try:
+        if history_range.endswith("d"):
+            return int(history_range[:-1])
+        if history_range.endswith("m"):
+            return int(history_range[:-1]) * 30
+        if history_range.endswith("y"):
+            return int(history_range[:-1]) * 365
+    except (ValueError, AttributeError):
+        pass
+    return 365
 
 # ── Solar Assistant Import API ─────────────────────────────────────────────
 

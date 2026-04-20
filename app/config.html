@@ -118,6 +118,7 @@
   .tariff-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
   .badge-flat       { background: #1e3a5f; color: var(--accent); }
   .badge-day_night  { background: #1a3347; color: #67e8f9; }
+  .badge-octopus    { background: #1a3325; color: #34d399; }
   .badge-baseline   { background: rgba(245,158,11,.15); color: var(--gold); border: 1px solid rgba(245,158,11,.3); }
   .tariff-body { padding: 16px; border-top: 1px solid var(--border); display: none; }
   .tariff-body.open { display: block; }
@@ -318,6 +319,49 @@
   .modal-actions {
     display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px;
   }
+  /* Octopus Import Modal */
+  #octo-modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.7); backdrop-filter: blur(3px);
+    z-index: 300; align-items: center; justify-content: center;
+  }
+  #octo-modal-overlay.visible { display: flex; }
+  #octo-modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 28px 28px 24px;
+    max-width: 520px; width: calc(100% - 40px);
+    box-shadow: 0 24px 64px rgba(0,0,0,.6);
+  }
+  #octo-modal .modal-icon { font-size: 32px; margin-bottom: 14px; }
+  #octo-modal h3 { font-size: 16px; font-weight: 700; margin-bottom: 10px; }
+  #octo-modal .modal-body { font-size: 13px; color: var(--muted); line-height: 1.6; margin-bottom: 18px; }
+  #octo-product-list {
+    max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+    margin-bottom: 16px;
+  }
+  .octo-product-option {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
+    cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  .octo-product-option:hover { border-color: var(--accent2); background: rgba(52,211,153,.04); }
+  .octo-product-option input[type="radio"] {
+    margin-top: 3px; flex-shrink: 0; accent-color: var(--accent2);
+    width: 15px; height: 15px; cursor: pointer;
+  }
+  .octo-product-option .op-text strong { display: block; font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+  .octo-product-option .op-text span   { font-size: 12px; color: var(--muted); }
+  .octo-product-option .op-badge {
+    margin-left: auto; flex-shrink: 0; font-size: 10px; font-weight: 600;
+    padding: 2px 7px; border-radius: 4px; align-self: center;
+  }
+  .op-badge-agile    { background: rgba(79,142,247,.15); color: var(--accent); border: 1px solid rgba(79,142,247,.3); }
+  .op-badge-fixed    { background: rgba(52,211,153,.12); color: var(--accent2); border: 1px solid rgba(52,211,153,.3); }
+  .op-badge-tracker  { background: rgba(251,191,36,.12); color: var(--warning); border: 1px solid rgba(251,191,36,.3); }
+  #octo-region-row { margin-bottom: 16px; }
+  #octo-status { font-size: 12px; color: var(--muted); min-height: 18px; margin-bottom: 12px; }
+  #octo-status.err { color: var(--danger); }
+  #octo-status.ok  { color: var(--accent2); }
 </style>
 </head>
 <body>
@@ -405,6 +449,7 @@
       <div style="display:flex;gap:8px">
         <button class="btn-ghost btn-sm" onclick="addTariff('flat')">+ Flat Rate</button>
         <button class="btn-ghost btn-sm" onclick="addTariff('day_night')">+ Economy 7</button>
+        <button class="btn-ghost btn-sm" style="color:var(--accent2);border-color:var(--accent2)" onclick="openOctoModal()">+ Octopus Tariff</button>
       </div>
     </div>
     <div id="tariff-list">
@@ -488,6 +533,56 @@
   </div>
 
 </main>
+
+<!-- Octopus Import Modal -->
+<div id="octo-modal-overlay">
+  <div id="octo-modal">
+    <div class="modal-icon">🐙</div>
+    <h3>Import Octopus Energy Tariff</h3>
+    <div class="modal-body">
+      Select a tariff product and your grid region. Rates are fetched live from
+      the Octopus API and added to the comparison list — no API key required.
+      The tariff will be available immediately for simulation.
+    </div>
+
+    <div class="field" style="margin-bottom:14px">
+      <label>Grid Region (GSP)</label>
+      <div id="octo-region-row">
+        <select id="octo-region">
+          <option value="_A">_A — East England</option>
+          <option value="_B">_B — East Midlands</option>
+          <option value="_C" selected>_C — Lincolnshire / East Midlands (default)</option>
+          <option value="_D">_D — London</option>
+          <option value="_E">_E — Merseyside / North Wales</option>
+          <option value="_F">_F — Midlands</option>
+          <option value="_G">_G — North West</option>
+          <option value="_H">_H — South East</option>
+          <option value="_J">_J — South</option>
+          <option value="_K">_K — South West</option>
+          <option value="_L">_L — Yorkshire</option>
+          <option value="_M">_M — North Scotland</option>
+          <option value="_N">_N — South Scotland</option>
+          <option value="_P">_P — North Wales / Mersey</option>
+        </select>
+      </div>
+      <div class="hint">Select the region that covers your property</div>
+    </div>
+
+    <div class="section-label" style="margin-bottom:10px">Available Products</div>
+    <div id="octo-product-list">
+      <div style="text-align:center;padding:20px;color:var(--muted)">
+        <span class="spinner"></span> Loading products&hellip;
+      </div>
+    </div>
+
+    <div id="octo-status"></div>
+
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeOctoModal()">Cancel</button>
+      <button class="btn-primary" id="octo-import-btn" onclick="doOctoImport()" disabled>Import Tariff</button>
+    </div>
+  </div>
+</div>
 
 <!-- Import Confirmation Modal -->
 <div id="import-modal-overlay">
@@ -581,6 +676,26 @@ async function loadConfig() {
 
     _baselineId = cfg?.simulation?.baseline_tariff_id || '';
     _tariffs = (cfg?.tariffs || []).map(normaliseLoaded);
+
+    // Restore any in-memory Octopus tariffs returned alongside the config
+    (cfg?.octopus_tariffs || []).forEach(t => {
+      if (!_tariffs.find(x => x.id === t.id)) {
+        _tariffs.push({
+          id:              t.id,
+          name:            t.name,
+          type:            t.type,        // 'octopus_flat' or 'octopus_agile'
+          standing_charge: String(t.standing_charge_p ?? t.standing_charge ?? '0'),
+          export_rate:     String(t.export_rate ?? '0'),
+          import_rate:     String(t.import_rate ?? ''),
+          slot_count:      t.slot_count ?? null,
+          product_code:    t.product_code ?? '',
+          tariff_code:     t.tariff_code ?? '',
+          gsp_region:      t.gsp_region ?? '',
+          _open:           false,
+        });
+      }
+    });
+
     if (!_baselineId && _tariffs.length) {
       _baselineId = _tariffs[0].id || slugify(_tariffs[0].name);
     }
@@ -622,12 +737,131 @@ function renderTariffs() {
   _tariffs.forEach((t, i) => {
     const tid        = t.id || slugify(t.name);
     const isBaseline = tid === _baselineId;
-    const typeLabel  = t.type === 'flat' ? 'Flat Rate' : 'Economy 7';
-    const badgeClass = t.type === 'flat' ? 'badge-flat' : 'badge-day_night';
+    const isOcto     = t.type === 'octopus_flat' || t.type === 'octopus_agile';
+    const typeLabel  = t.type === 'flat'          ? 'Flat Rate'
+                     : t.type === 'day_night'     ? 'Economy 7'
+                     : t.type === 'octopus_agile' ? 'Octopus Agile'
+                     : 'Octopus';
+    const badgeClass = t.type === 'flat'      ? 'badge-flat'
+                     : t.type === 'day_night' ? 'badge-day_night'
+                     : 'badge-octopus';
 
     const card = document.createElement('div');
     card.className = `tariff-card${isBaseline ? ' is-baseline' : ''}`;
     card.dataset.idx = i;
+
+    const actionsHtml = isBaseline
+      ? `<span style="font-size:12px;color:var(--gold)">&#9733; This is your current tariff &mdash; used as the comparison baseline</span>`
+      : `<button class="btn-gold btn-sm" onclick="setBaseline(${i})">&#9733; Set as Current Tariff</button>`;
+
+    const bodyHtml = isOcto
+      ? `<div class="tariff-body ${t._open ? 'open' : ''}">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+            Fetched from the Octopus Energy API &mdash; rates are read-only.
+            <br>Product: <code style="color:var(--text)">${escHtml(t.product_code||'')}</code>
+            &nbsp;&nbsp;Tariff: <code style="color:var(--text)">${escHtml(t.tariff_code||'')}</code>
+            &nbsp;&nbsp;Region: <code style="color:var(--text)">${escHtml(t.gsp_region||'')}</code>
+          </div>
+          <div class="row row-3">
+            <div class="field">
+              <label>Standing Charge (p/day)</label>
+              <input type="number" disabled value="${escHtml(t.standing_charge??'')}" style="opacity:.6" />
+            </div>
+            <div class="field">
+              <label>${t.type==='octopus_agile' ? 'Rate Slots' : 'Import Rate (p/kWh)'}</label>
+              <input type="text" disabled value="${t.type==='octopus_agile' ? (t.slot_count||'?')+' half-hour slots' : escHtml(t.import_rate??'')}" style="opacity:.6" />
+            </div>
+            <div class="field">
+              <label>Export Rate (p/kWh)</label>
+              <input type="number" disabled value="${escHtml(t.export_rate??'0')}" style="opacity:.6" />
+            </div>
+          </div>
+          <div class="tariff-actions">
+            ${actionsHtml}
+            <span class="spacer"></span>
+            <button class="btn-danger btn-sm" onclick="removeTariff(${i})">Remove</button>
+          </div>
+        </div>`
+      : `<div class="tariff-body ${t._open ? 'open' : ''}">
+          <div class="row row-2">
+            <div class="field">
+              <label>Tariff Name</label>
+              <input type="text" data-field="name" value="${escHtml(t.name)}" placeholder="e.g. Standard Variable" />
+            </div>
+            <div class="field">
+              <label>Type</label>
+              <select data-field="type" onchange="onTypeChange(${i}, this.value)">
+                <option value="flat"      ${t.type==='flat'      ? 'selected':''}>Flat Rate</option>
+                <option value="day_night" ${t.type==='day_night' ? 'selected':''}>Economy 7</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="fields-flat ${t.type === 'flat' ? 'active' : ''}">
+            <div class="section-label">Import / Export</div>
+            <div class="row row-2">
+              <div class="field">
+                <label>Fixed Price per kWh (p)</label>
+                <input type="number" step="0.01" min="0" data-field="import_rate" value="${t.import_rate ?? ''}" placeholder="24.50" />
+              </div>
+              <div class="field">
+                <label>Export Rate per kWh (p)</label>
+                <input type="number" step="0.01" min="0" data-field="export_rate" value="${t.export_rate ?? ''}" placeholder="15.00" />
+              </div>
+            </div>
+            <div class="section-label">Standing Charge</div>
+            <div class="row row-2">
+              <div class="field">
+                <label>Daily Charge (p/day)</label>
+                <input type="number" step="0.01" min="0" data-field="standing_charge" value="${t.standing_charge ?? ''}" placeholder="53.37" />
+              </div>
+            </div>
+          </div>
+
+          <div class="fields-e7 ${t.type === 'day_night' ? 'active' : ''}">
+            <div class="section-label">Rates</div>
+            <div class="row row-2">
+              <div class="field">
+                <label>Day Rate per kWh (p)</label>
+                <input type="number" step="0.01" min="0" data-field="day_rate" value="${t.day_rate ?? ''}" placeholder="28.62" />
+              </div>
+              <div class="field">
+                <label>Night Rate per kWh (p)</label>
+                <input type="number" step="0.01" min="0" data-field="night_rate" value="${t.night_rate ?? ''}" placeholder="13.10" />
+              </div>
+            </div>
+            <div class="section-label">Night Rate Window</div>
+            <div class="row row-3">
+              <div class="field">
+                <label>Night Starts</label>
+                <input type="time" data-field="night_start" value="${t.night_start || '00:00'}" />
+                <div class="hint">When cheap rate begins</div>
+              </div>
+              <div class="field">
+                <label>Night Ends</label>
+                <input type="time" data-field="night_end" value="${t.night_end || '07:00'}" />
+                <div class="hint">When day rate resumes</div>
+              </div>
+              <div class="field">
+                <label>Export Rate per kWh (p)</label>
+                <input type="number" step="0.01" min="0" data-field="export_rate" value="${t.export_rate ?? ''}" placeholder="15.00" />
+              </div>
+            </div>
+            <div class="section-label">Standing Charge</div>
+            <div class="row row-2">
+              <div class="field">
+                <label>Daily Charge (p/day)</label>
+                <input type="number" step="0.01" min="0" data-field="standing_charge" value="${t.standing_charge ?? ''}" placeholder="53.37" />
+              </div>
+            </div>
+          </div>
+
+          <div class="tariff-actions">
+            ${actionsHtml}
+            <span class="spacer"></span>
+            <button class="btn-danger btn-sm" onclick="removeTariff(${i})">Remove</button>
+          </div>
+        </div>`;
 
     card.innerHTML = `
       <div class="tariff-header" onclick="toggleTariff(${i})">
@@ -638,88 +872,7 @@ function renderTariffs() {
           <span class="tariff-badge ${badgeClass}">${typeLabel}</span>
         </span>
       </div>
-      <div class="tariff-body ${t._open ? 'open' : ''}">
-        <div class="row row-2">
-          <div class="field">
-            <label>Tariff Name</label>
-            <input type="text" data-field="name" value="${escHtml(t.name)}" placeholder="e.g. Standard Variable" />
-          </div>
-          <div class="field">
-            <label>Type</label>
-            <select data-field="type" onchange="onTypeChange(${i}, this.value)">
-              <option value="flat"      ${t.type==='flat'      ? 'selected':''}>Flat Rate</option>
-              <option value="day_night" ${t.type==='day_night' ? 'selected':''}>Economy 7</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="fields-flat ${t.type === 'flat' ? 'active' : ''}">
-          <div class="section-label">Import / Export</div>
-          <div class="row row-2">
-            <div class="field">
-              <label>Fixed Price per kWh (p)</label>
-              <input type="number" step="0.01" min="0" data-field="import_rate" value="${t.import_rate ?? ''}" placeholder="24.50" />
-            </div>
-            <div class="field">
-              <label>Export Rate per kWh (p)</label>
-              <input type="number" step="0.01" min="0" data-field="export_rate" value="${t.export_rate ?? ''}" placeholder="15.00" />
-            </div>
-          </div>
-          <div class="section-label">Standing Charge</div>
-          <div class="row row-2">
-            <div class="field">
-              <label>Daily Charge (p/day)</label>
-              <input type="number" step="0.01" min="0" data-field="standing_charge" value="${t.standing_charge ?? ''}" placeholder="53.37" />
-            </div>
-          </div>
-        </div>
-
-        <div class="fields-e7 ${t.type === 'day_night' ? 'active' : ''}">
-          <div class="section-label">Rates</div>
-          <div class="row row-2">
-            <div class="field">
-              <label>Day Rate per kWh (p)</label>
-              <input type="number" step="0.01" min="0" data-field="day_rate" value="${t.day_rate ?? ''}" placeholder="28.62" />
-            </div>
-            <div class="field">
-              <label>Night Rate per kWh (p)</label>
-              <input type="number" step="0.01" min="0" data-field="night_rate" value="${t.night_rate ?? ''}" placeholder="13.10" />
-            </div>
-          </div>
-          <div class="section-label">Night Rate Window</div>
-          <div class="row row-3">
-            <div class="field">
-              <label>Night Starts</label>
-              <input type="time" data-field="night_start" value="${t.night_start || '00:00'}" />
-              <div class="hint">When cheap rate begins</div>
-            </div>
-            <div class="field">
-              <label>Night Ends</label>
-              <input type="time" data-field="night_end" value="${t.night_end || '07:00'}" />
-              <div class="hint">When day rate resumes</div>
-            </div>
-            <div class="field">
-              <label>Export Rate per kWh (p)</label>
-              <input type="number" step="0.01" min="0" data-field="export_rate" value="${t.export_rate ?? ''}" placeholder="15.00" />
-            </div>
-          </div>
-          <div class="section-label">Standing Charge</div>
-          <div class="row row-2">
-            <div class="field">
-              <label>Daily Charge (p/day)</label>
-              <input type="number" step="0.01" min="0" data-field="standing_charge" value="${t.standing_charge ?? ''}" placeholder="53.37" />
-            </div>
-          </div>
-        </div>
-
-        <div class="tariff-actions">
-          ${isBaseline
-            ? `<span style="font-size:12px;color:var(--gold)">&#9733; This is your current tariff &mdash; used as the comparison baseline</span>`
-            : `<button class="btn-gold btn-sm" onclick="setBaseline(${i})">&#9733; Set as Current Tariff</button>`}
-          <span class="spacer"></span>
-          <button class="btn-danger btn-sm" onclick="removeTariff(${i})">Remove</button>
-        </div>
-      </div>`;
+      ${bodyHtml}`;
 
     card.querySelectorAll('[data-field]').forEach(el => {
       el.addEventListener('input', () => {
@@ -740,7 +893,6 @@ function setBaseline(i) {
   renderTariffs();
   markDirty();
 }
-
 function toggleTariff(i) { _tariffs[i]._open = !_tariffs[i]._open; renderTariffs(); }
 function onTypeChange(i, val) { _tariffs[i].type = val; renderTariffs(); markDirty(); }
 
@@ -838,7 +990,7 @@ async function saveConfig() {
     mqtt_port:           port,
     timezone:            tz,
     baseline_tariff_id:  _baselineId,
-    tariffs: _tariffs.map(t => {
+    tariffs: _tariffs.filter(t => t.type !== 'octopus_flat' && t.type !== 'octopus_agile').map(t => {
       const base = {
         id:              t.id || slugify(t.name),
         name:            t.name,
@@ -1168,6 +1320,188 @@ function saFmtDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+// ── Octopus Import Modal ───────────────────────────────────────────────────
+
+let _octoProducts   = [];
+let _octoSelected   = null;
+
+async function openOctoModal() {
+  document.getElementById('octo-modal-overlay').classList.add('visible');
+  document.getElementById('octo-import-btn').disabled = true;
+  document.getElementById('octo-status').textContent = '';
+  document.getElementById('octo-status').className = '';
+  _octoSelected = null;
+  _octoSelectedSet = new Set();
+
+  if (_octoProducts.length === 0) {
+    await octoLoadProducts();
+  } else {
+    octoRenderProducts();   // always re-render to clear prior radio selection
+  }
+}
+
+function closeOctoModal() {
+  document.getElementById('octo-modal-overlay').classList.remove('visible');
+}
+
+document.getElementById('octo-modal-overlay').addEventListener('click', function(e) {
+  if (e.target === this) closeOctoModal();
+});
+
+async function octoLoadProducts() {
+  const list = document.getElementById('octo-product-list');
+  list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted)"><span class="spinner"></span> Loading products&hellip;</div>';
+  try {
+    const r = await fetch('/api/octopus/products');
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error);
+
+    // Sort: variable/agile first, then tracker, then fixed
+    _octoProducts = (d.products || []).sort((a, b) => {
+      const score = p => p.is_tracker ? 1 : p.is_variable ? 0 : 2;
+      return score(a) - score(b);
+    });
+
+    octoRenderProducts();
+  } catch(e) {
+    list.innerHTML = `<div style="color:var(--danger);font-size:13px;padding:12px">
+      &#10007; Could not load products: ${escHtml(e.message)}
+    </div>`;
+  }
+}
+
+function octoRenderProducts() {
+  const list = document.getElementById('octo-product-list');
+  if (!_octoProducts.length) {
+    list.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:12px">No products available.</div>';
+    return;
+  }
+
+  list.innerHTML = _octoProducts.map((p, i) => {
+    const badgeCls = p.is_tracker ? 'op-badge-tracker' : p.is_variable ? 'op-badge-agile' : 'op-badge-fixed';
+    const badgeTxt = p.is_tracker ? 'Tracker' : p.is_variable ? 'Variable/Agile' : 'Fixed';
+    const desc     = p.description
+      ? p.description.replace(/<[^>]+>/g, '').substring(0, 100) + (p.description.length > 100 ? '…' : '')
+      : '';
+    return `
+      <label class="octo-product-option">
+        <input type="checkbox" value="${i}" onchange="octoToggleProduct(${i}, this.checked)" />
+        <span class="op-text">
+          <strong>${escHtml(p.display_name || p.code)}</strong>
+          <span>${escHtml(p.code)}${desc ? ' — ' + escHtml(desc) : ''}</span>
+        </span>
+        <span class="op-badge ${badgeCls}">${badgeTxt}</span>
+      </label>`;
+  }).join('');
+}
+
+let _octoSelectedSet = new Set();
+
+function octoToggleProduct(i, checked) {
+  if (checked) {
+    _octoSelectedSet.add(i);
+  } else {
+    _octoSelectedSet.delete(i);
+  }
+  document.getElementById('octo-import-btn').disabled = _octoSelectedSet.size === 0;
+  document.getElementById('octo-import-btn').textContent =
+    _octoSelectedSet.size > 1 ? `Import ${_octoSelectedSet.size} Tariffs` : 'Import Tariff';
+  document.getElementById('octo-status').textContent = '';
+  document.getElementById('octo-status').className = '';
+}
+
+async function doOctoImport() {
+  if (_octoSelectedSet.size === 0) return;
+
+  const region  = document.getElementById('octo-region').value;
+  const btn     = document.getElementById('octo-import-btn');
+  const status  = document.getElementById('octo-status');
+  const indices = [..._octoSelectedSet];
+
+  btn.disabled = true;
+  status.className = '';
+
+  const results = { ok: [], fail: [] };
+
+  for (let n = 0; n < indices.length; n++) {
+    const product = _octoProducts[indices[n]];
+    status.innerHTML = `<span class="spinner"></span> Importing ${n + 1} of ${indices.length}: ${escHtml(product.display_name || product.code)}&hellip;`;
+
+    try {
+      const r = await fetch('/api/octopus/import-tariff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          product_code: product.code,
+          gsp_region:   region,
+        }),
+      });
+      const d = await r.json();
+      if (!d.success) throw new Error(d.error);
+
+      const regionLabels = {
+        '_A': 'East England',
+        '_B': 'East Midlands',
+        '_C': 'Lincolnshire / East Midlands',
+        '_D': 'London',
+        '_E': 'Merseyside / North Wales',
+        '_F': 'Midlands',
+        '_G': 'North West',
+        '_H': 'South East',
+        '_J': 'South',
+        '_K': 'South West',
+        '_L': 'Yorkshire',
+        '_M': 'North Scotland',
+        '_N': 'South Scotland',
+        '_P': 'North Wales / Mersey',
+      };
+      const regionLabel = regionLabels[region] || region;
+
+      const newTariff = {
+        id:              d.tariff_id,
+        name:            `${product.display_name || product.code} (${regionLabel})`,
+        type:            d.is_agile ? 'octopus_agile' : 'octopus_flat',
+        standing_charge: String(d.standing_charge_p ?? '0'),
+        export_rate:     '0',
+        import_rate:     '',
+        slot_count:      d.rate_slots,
+        product_code:    d.product_code,
+        tariff_code:     d.tariff_code,
+        gsp_region:      region,
+        _open:           false,
+      };
+
+      const existingIdx = _tariffs.findIndex(t => t.id === d.tariff_id);
+      if (existingIdx >= 0) {
+        _tariffs[existingIdx] = newTariff;
+      } else {
+        _tariffs.push(newTariff);
+      }
+
+      results.ok.push(product.display_name || product.code);
+    } catch(e) {
+      results.fail.push(`${product.display_name || product.code} (${e.message})`);
+    }
+  }
+
+  renderTariffs();
+
+  if (results.fail.length === 0) {
+    status.className = 'ok';
+    status.textContent = `✓ Imported ${results.ok.length} tariff${results.ok.length > 1 ? 's' : ''}: ${results.ok.join(', ')}`;
+    toast(`${results.ok.length} Octopus tariff${results.ok.length > 1 ? 's' : ''} imported — run simulation to include them`, 'ok');
+    setTimeout(closeOctoModal, 1800);
+  } else if (results.ok.length === 0) {
+    status.className = 'err';
+    status.textContent = `✗ All imports failed: ${results.fail.join('; ')}`;
+    btn.disabled = false;
+  } else {
+    status.className = 'ok';
+    status.textContent = `✓ ${results.ok.length} imported, ${results.fail.length} failed: ${results.fail.join('; ')}`;
+    toast(`Partial import: ${results.ok.length} succeeded, ${results.fail.length} failed`, 'ok');
+    setTimeout(closeOctoModal, 2500);
+  }
 }
 </script>
 </body>
