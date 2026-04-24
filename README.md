@@ -265,10 +265,12 @@ services:
       - ./config:/app/config
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - INFLUX_URL=http://influxdb:8086
-      - INFLUX_TOKEN=your_token
-      - INFLUX_ORG=home
-      - INFLUX_BUCKET=solar
+      # Required only for Solar Assistant backup import — not needed for normal operation.
+      # These should match the InfluxDB instance managed by mqtt-bridge.
+      # - INFLUX_URL=http://influxdb:8086
+      # - INFLUX_TOKEN=your_token
+      # - INFLUX_ORG=home
+      # - INFLUX_BUCKET=solar
     networks:
       - home-stack
     depends_on:
@@ -280,12 +282,14 @@ services:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `INFLUX_URL` | — | InfluxDB 2.x base URL (e.g. `http://influxdb:8086`) |
-| `INFLUX_TOKEN` | — | InfluxDB authentication token |
-| `INFLUX_ORG` | — | InfluxDB organisation name |
-| `INFLUX_BUCKET` | — | InfluxDB bucket name |
+| `INFLUX_URL` | — | InfluxDB 2.x base URL (e.g. `http://influxdb:8086`) — **SA import only** |
+| `INFLUX_TOKEN` | — | InfluxDB authentication token — **SA import only** |
+| `INFLUX_ORG` | — | InfluxDB organisation name — **SA import only** |
+| `INFLUX_BUCKET` | — | InfluxDB bucket name — **SA import only** |
 | `OCTOPUS_CACHE_DIR` | `/app/data/octopus_cache` | Directory for caching Octopus API responses |
 | `OCTOPUS_CACHE_TTL` | `3600` | Cache TTL in seconds (default: 1 hour) |
+
+> The `INFLUX_*` variables are only required if you use the **Solar Assistant backup import** feature. Normal operation (ingesting live data via mqtt-bridge and running simulations) does not require them to be set.
 ---
 
 ## File layout

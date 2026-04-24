@@ -6,6 +6,9 @@
 # Prerequisites:
 #   - Docker and Docker Compose installed
 #   - An mqtt-bridge instance running with InfluxDB enabled
+#     (InfluxDB is managed by mqtt-bridge — no separate InfluxDB container is needed here)
+#   - If using the Solar Assistant backup import, uncomment and set the INFLUX_* environment
+#     variables below to point at mqtt-bridge's InfluxDB instance
 #     (see https://github.com/selidie/mqtt-bridge)
 #   - Update config/settings.yaml with your mqtt-bridge URL and tariffs
 #     before starting for the first time
@@ -32,9 +35,9 @@ services:
     environment:
       - PORT=5011
       - CONFIG_PATH=/app/config/settings.yaml
-      # Solar Assistant import — InfluxDB 2.x connection (same as mqtt-bridge)
-      # Uncomment and set these if INFLUX_URL / INFLUX_TOKEN are not already
-      # present in your environment or passed another way:
+      # Solar Assistant import — InfluxDB 2.x connection (same instance as mqtt-bridge).
+      # Only required if you use the SA backup import feature. Uncomment and set if
+      # INFLUX_URL / INFLUX_TOKEN are not already present in your environment:
       # - INFLUX_URL=http://your-influxdb-host:8086
       # - INFLUX_TOKEN=your_influxdb_token
       # - INFLUX_ORG=home
