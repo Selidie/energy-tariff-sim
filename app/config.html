@@ -905,14 +905,42 @@ function addTariff(type) {
   markDirty();
 }
 
-function removeTariff(i) {
-  const removedId = _tariffs[i].id || slugify(_tariffs[i].name);
+async function removeTariff(i) {
+  const t = _tariffs[i];
+  const removedId = t.id || slugify(t.name);
+  const isOcto = t.type === 'octopus_flat' || t.type === 'octopus_agile';
+
+  // For Octopus tariffs, call the backend DELETE endpoint so the tariff is
+  // removed from octopus_tariffs.json and won't be re-imported on next pipeline run.
+  if (isOcto && removedId) {
+    try {
+      const r = await fetch(`/api/octopus/tariff/${encodeURIComponent(removedId)}`, {
+        method: 'DELETE',
+      });
+      const d = await r.json();
+      if (!d.success) {
+        toast('Failed to remove Octopus tariff from server: ' + (d.error || 'Unknown error'), 'err');
+        return;
+      }
+    } catch (e) {
+      toast('Error removing Octopus tariff: ' + e.message, 'err');
+      return;
+    }
+  }
+
   _tariffs.splice(i, 1);
   if (removedId === _baselineId && _tariffs.length) {
     _baselineId = _tariffs[0].id || slugify(_tariffs[0].name);
   }
   renderTariffs();
-  markDirty();
+
+  // Non-Octopus tariffs still need a Save to persist; Octopus tariffs are
+  // already persisted by the DELETE call above.
+  if (!isOcto) {
+    markDirty();
+  } else {
+    toast('Octopus tariff removed ✓', 'ok');
+  }
 }
 
 // ── Diagnose ───────────────────────────────────────────────────────────────
