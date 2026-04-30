@@ -515,3 +515,143 @@ def run_ingest(cfg: dict, date_from: str = None, date_to: str = None) -> tuple:
     diag['date_from']    = str(df.index.min())
     diag['date_to']      = str(df.index.max())
     return df, diag
+
+
+# ---------------------------------------------------------------------------
+# Octopus personal account consumption path
+# ---------------------------------------------------------------------------
+
+def has_octopus_account(cfg: dict) -> bool:
+    """
+    Return True when all three required Octopus account fields are present
+    in the config.  Export meter fields are optional.
+    """
+    acct = cfg.get("octopus_account", {})
+    return bool(
+        acct.get("api_key", "").strip()
+        and acct.get("import_mpan", "").strip()
+        and acct.get("import_serial", "").strip()
+    )
+
+
+def run_octopus_ingest(
+    cfg: dict,
+    date_from: str = None,
+    date_to: str = None,
+) -> tuple:
+    """
+    Fetch half-hourly consumption from the Octopus personal API and return
+    an aggregated DataFrame ready for simulate.py.
+
+    Because Octopus already returns data in 30-minute kWh intervals, this
+    path bypasses the raw → aggregate step and writes directly to the
+    aggregated store.
+
+    Returns (agg_df, diag) where diag includes data_source='octopus_api'.
+    On failure returns (empty DataFrame, diag with ok=False).
+    """
+    from app import octopus_client as _octo
+    from app.aggregate import save_aggregated
+
+    acct       = cfg.get("octopus_account", {})
+    api_key    = acct.get("api_key", "").strip()
+    imp_mpan   = acct.get("import_mpan", "").strip()
+    imp_serial = acct.get("import_serial", "").strip()
+    exp_mpan   = acct.get("export_mpan", "").strip()
+    exp_serial = acct.get("export_serial", "").strip()
+    tz         = cfg.get("simulation", {}).get("timezone", "UTC")
+    agg_path   = cfg["storage"]["aggregated_path"]
+
+    # --- Resolve date range ---
+    now = datetime.now(timezone.utc)
+    if date_from and date_to:
+        try:
+            dt_from = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            dt_to   = datetime.strptime(date_to,   "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
+        except ValueError:
+            dt_from = now - timedelta(days=365)
+            dt_to   = now
+    else:
+        history_range = cfg.get("simulation", {}).get("history_range", "700d")
+        try:
+            days = int(history_range.rstrip("d"))
+        except ValueError:
+            days = 365
+        dt_from = now - timedelta(days=days)
+        dt_to   = now
+
+    log.info(
+        "Octopus ingest: mpan=%s serial=%s range=%s->%s",
+        imp_mpan, imp_serial,
+        dt_from.strftime("%Y-%m-%d"), dt_to.strftime("%Y-%m-%d"),
+    )
+
+    # --- Fetch import consumption ---
+    try:
+        import_records = _octo.get_consumption(imp_mpan, imp_serial, api_key, dt_from, dt_to)
+    except Exception as e:
+        log.error("Octopus import consumption fetch failed: %s", e)
+        return pd.DataFrame(), {
+            "ok": False,
+            "reason": f"Octopus API error (import): {e}",
+            "data_source": "octopus_api",
+        }
+
+    if not import_records:
+        return pd.DataFrame(), {
+            "ok": False,
+            "reason": "Octopus API returned no import consumption for the requested period.",
+            "data_source": "octopus_api",
+        }
+
+    # --- Fetch export consumption (optional) ---
+    export_records = []
+    has_export = bool(exp_mpan and exp_serial)
+    if has_export:
+        try:
+            export_records = _octo.get_consumption(exp_mpan, exp_serial, api_key, dt_from, dt_to)
+            log.info("Octopus export consumption: %d records", len(export_records))
+        except Exception as e:
+            log.warning("Octopus export consumption fetch failed (continuing without): %s", e)
+            has_export = False
+
+    # --- Build import DataFrame ---
+    imp_df = pd.DataFrame(import_records)
+    imp_df["interval_start"] = pd.to_datetime(imp_df["interval_start"], utc=True).dt.tz_convert(tz)
+    imp_df = imp_df.set_index("interval_start")[["consumption"]].rename(
+        columns={"consumption": "grid_import_kwh"}
+    )
+
+    # --- Build export DataFrame ---
+    if export_records:
+        exp_df = pd.DataFrame(export_records)
+        exp_df["interval_start"] = pd.to_datetime(exp_df["interval_start"], utc=True).dt.tz_convert(tz)
+        exp_df = exp_df.set_index("interval_start")[["consumption"]].rename(
+            columns={"consumption": "grid_export_kwh"}
+        )
+        agg_df = imp_df.join(exp_df, how="left")
+        agg_df["grid_export_kwh"] = agg_df["grid_export_kwh"].fillna(0.0)
+    else:
+        agg_df = imp_df.copy()
+        agg_df["grid_export_kwh"] = 0.0
+
+    agg_df = agg_df.sort_index()
+    agg_df.index.name = "interval_start"
+
+    save_aggregated(agg_df, agg_path, tag="octopus_latest")
+
+    log.info(
+        "Octopus ingest complete: %d intervals, has_export=%s, %s->%s",
+        len(agg_df), has_export,
+        str(agg_df.index.min().date()), str(agg_df.index.max().date()),
+    )
+
+    return agg_df, {
+        "ok":          True,
+        "reason":      "ok (Octopus personal API)",
+        "data_source": "octopus_api",
+        "has_export":  has_export,
+        "intervals":   len(agg_df),
+        "date_from":   str(agg_df.index.min().date()),
+        "date_to":     str(agg_df.index.max().date()),
+    }

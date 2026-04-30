@@ -51,6 +51,26 @@ def _paginate(url: str, params: dict = None) -> list:
     return results
 
 
+def _get_auth(url: str, api_key: str, params: dict = None) -> dict:
+    """GET a URL with HTTP Basic Auth (api_key as username, empty password)."""
+    resp = requests.get(url, params=params, auth=(api_key, ''), timeout=_TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _paginate_auth(url: str, api_key: str, params: dict = None) -> list:
+    """Paginate an authenticated Octopus endpoint, following next links."""
+    params = dict(params or {})
+    params.setdefault('page_size', _PAGE_SIZE)
+    results = []
+    next_url = url
+    while next_url:
+        data     = _get_auth(next_url, api_key, params if next_url == url else None)
+        results += data.get('results', [])
+        next_url = data.get('next')
+    return results
+
+
 def _cache_path(key: str) -> str:
     os.makedirs(_CACHE_DIR, exist_ok=True)
     safe = key.replace("/", "_").replace("?", "_").replace("&", "_")
@@ -223,3 +243,95 @@ def clear_cache() -> int:
     except FileNotFoundError:
         pass
     return removed
+
+
+def test_account_credentials(api_key: str, import_mpan: str) -> dict:
+    """
+    Validate an Octopus API key by fetching the meter point detail for the
+    supplied MPAN.  Raises requests.HTTPError on 401 / 403 / 404.
+
+    Returns the raw meter-point JSON dict on success, which includes
+    'gsp', 'mpan', 'profile_class' and an 'agreements' list.
+    """
+    url  = f"{_BASE_URL}/electricity-meter-points/{import_mpan}/"
+    data = _get_auth(url, api_key)
+    return data
+
+
+def get_active_tariff_from_agreements(meter_point: dict) -> Optional[dict]:
+    """
+    Parse the agreements list from a meter-point response and return the
+    currently active tariff agreement, or None if not found.
+
+    Returns a dict with:
+      tariff_code  (e.g. "E-1R-AGILE-24-10-01-C")
+      valid_from   (ISO string)
+      valid_to     (ISO string or None = still active)
+    """
+    agreements = meter_point.get("agreements", [])
+    if not agreements:
+        return None
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Sort newest first
+    sorted_agr = sorted(agreements, key=lambda x: x.get("valid_from", ""), reverse=True)
+
+    # Prefer an agreement with no valid_to (currently active)
+    for agr in sorted_agr:
+        if agr.get("valid_to") is None:
+            return agr
+
+    # Fall back to the most recent one whose valid_to is in the future
+    for agr in sorted_agr:
+        if agr.get("valid_to", "") > now:
+            return agr
+
+    # Last resort: just return the most recent
+    return sorted_agr[0] if sorted_agr else None
+
+
+def parse_tariff_code(tariff_code: str) -> dict:
+    """
+    Extract product_code and gsp_region from a tariff code string.
+
+    Tariff codes follow the pattern: E-1R-{PRODUCT_CODE}-{GSP}
+    e.g. "E-1R-AGILE-24-10-01-C"  →  product_code="AGILE-24-10-01", gsp="_C"
+
+    Returns a dict with keys: product_code, gsp_region (or empty strings if unparseable)
+    """
+    import re
+    m = re.match(r'^[EG]-\dR-(.+)-([A-P])$', tariff_code or "")
+    if m:
+        return {"product_code": m.group(1), "gsp_region": f"_{m.group(2)}"}
+    return {"product_code": "", "gsp_region": ""}
+
+
+def get_consumption(mpan: str,
+                    serial: str,
+                    api_key: str,
+                    period_from: datetime,
+                    period_to: datetime) -> list:
+    """
+    Fetch half-hourly consumption data (kWh) for a meter from the Octopus API.
+
+    Returns a list of dicts, each with:
+      interval_start  (ISO 8601 string, UTC)
+      interval_end    (ISO 8601 string, UTC)
+      consumption     (float, kWh)
+
+    Results are ordered oldest-first.  Octopus returns up to 25,000 records
+    per page; _paginate_auth follows the next links automatically.
+    """
+    from_str = period_from.strftime('%Y-%m-%dT%H:%M:%SZ')
+    to_str   = period_to.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    url    = (f"{_BASE_URL}/electricity-meter-points/{mpan}"
+              f"/meters/{serial}/consumption/")
+    params = {
+        'period_from':  from_str,
+        'period_to':    to_str,
+        'order_by':     'period',
+        'page_size':    _PAGE_SIZE,
+    }
+    return _paginate_auth(url, api_key, params)

@@ -362,6 +362,53 @@
   #octo-status { font-size: 12px; color: var(--muted); min-height: 18px; margin-bottom: 12px; }
   #octo-status.err { color: var(--danger); }
   #octo-status.ok  { color: var(--accent2); }
+
+  /* Octopus Account card */
+  #octo-account-status {
+    font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 12px;
+  }
+  #octo-account-status.configured {
+    background: rgba(52,211,153,.12); color: var(--accent2); border: 1px solid rgba(52,211,153,.3);
+  }
+  #octo-account-status.not-configured {
+    background: rgba(136,146,170,.1); color: var(--muted); border: 1px solid var(--border);
+  }
+  #octo-account-status.error {
+    background: rgba(248,113,113,.1); color: var(--danger); border: 1px solid rgba(248,113,113,.3);
+  }
+  .octo-account-section-label {
+    font-size: 11px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .07em;
+    margin-bottom: 10px; margin-top: 18px;
+  }
+  .octo-account-section-label:first-of-type { margin-top: 0; }
+  #octo-export-fields { display: none; }
+  #octo-export-fields.visible { display: block; }
+  #octo-test-status {
+    font-size: 12px; min-height: 18px; margin-top: 10px;
+  }
+  #octo-test-status.ok  { color: var(--accent2); }
+  #octo-test-status.err { color: var(--danger); }
+  .key-saved-hint {
+    font-size: 11px; color: var(--accent2); margin-top: 4px;
+  }
+
+  /* Detected tariff banner */
+  #acct-detected-tariff {
+    display: none; margin-top: 14px;
+    background: rgba(52,211,153,.07); border: 1px solid rgba(52,211,153,.25);
+    border-radius: 8px; padding: 13px 16px;
+  }
+  #acct-detected-tariff .dt-label {
+    font-size: 11px; font-weight: 600; color: var(--accent2);
+    text-transform: uppercase; letter-spacing: .07em; margin-bottom: 6px;
+  }
+  #acct-detected-tariff .dt-code {
+    font-family: monospace; font-size: 13px; color: var(--text); margin-bottom: 8px;
+  }
+  #acct-detected-tariff .dt-hint {
+    font-size: 12px; color: var(--muted); margin-bottom: 10px;
+  }
 </style>
 </head>
 <body>
@@ -457,6 +504,76 @@
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
         No tariffs configured. Add one above.
       </div>
+    </div>
+  </div>
+
+<!-- Octopus Account (Consumption Data) -->
+  <div class="card">
+    <div class="card-header">
+      <h2>&#128273; Octopus Account</h2>
+      <span id="acct-header-status" class="acct-header-status unconfigured">Not configured</span>
+    </div>
+
+    <div class="acct-section-label">API Credentials</div>
+    <div class="api-key-row">
+      <div class="field">
+        <label>API Key</label>
+        <input type="password" id="acct-api-key" placeholder="Enter your Octopus API key" autocomplete="off" />
+        <div class="hint">Found at <strong>octopus.energy/dashboard/developer</strong> under your account</div>
+      </div>
+      <button class="btn-secondary btn-sm" id="acct-change-key-btn" onclick="acctEnableKeyField()" style="display:none;margin-bottom:20px">Change Key</button>
+    </div>
+
+    <div class="acct-section-label">Import Meter</div>
+    <div class="row row-2">
+      <div class="field">
+        <label>MPAN (13 digits)</label>
+        <input type="text" id="acct-import-mpan" placeholder="1012345678901" maxlength="13" />
+        <div class="hint">Your electricity import meter point reference</div>
+      </div>
+      <div class="field">
+        <label>Meter Serial Number</label>
+        <input type="text" id="acct-import-serial" placeholder="e.g. 19L1234567" />
+        <div class="hint">Printed on the meter or found in your Octopus account</div>
+      </div>
+    </div>
+
+    <div class="field" style="margin-top:6px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="acct-has-export" onchange="acctToggleExport(this.checked)" style="width:15px;height:15px;accent-color:var(--accent)" />
+        I have an export meter / SEG tariff
+      </label>
+    </div>
+
+    <div id="acct-export-fields">
+      <div class="acct-section-label">Export Meter</div>
+      <div class="row row-2">
+        <div class="field">
+          <label>Export MPAN (13 digits)</label>
+          <input type="text" id="acct-export-mpan" placeholder="2012345678901" maxlength="13" />
+          <div class="hint">Your electricity export meter point reference</div>
+        </div>
+        <div class="field">
+          <label>Export Meter Serial Number</label>
+          <input type="text" id="acct-export-serial" placeholder="e.g. 19L1234568" />
+          <div class="hint">May be the same physical meter as import</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:16px;align-items:center;flex-wrap:wrap">
+      <button class="btn-secondary btn-sm" onclick="testOctopusAccount()">&#128272; Test Connection</button>
+      <button class="btn-primary btn-sm" onclick="saveConfig()">Save Account &amp; Settings</button>
+    </div>
+    <div id="acct-status"></div>
+
+    <div id="acct-detected-tariff">
+      <div class="dt-label">&#9989; Active Tariff Detected</div>
+      <div class="dt-code" id="acct-dt-code"></div>
+      <div class="dt-hint">This is the tariff currently registered to your meter. Would you like to import it for simulation?</div>
+      <button class="btn-ghost btn-sm" id="acct-dt-import-btn" onclick="acctImportDetectedTariff()">
+        + Import This Tariff
+      </button>
     </div>
   </div>
 
@@ -702,6 +819,37 @@ async function loadConfig() {
 
     renderTariffs();
     attachChangeListeners();
+
+    // Populate Octopus Account fields
+    const acct = cfg.octopus_account || {};
+    const keyField    = document.getElementById('acct-api-key');
+    const changeBtn   = document.getElementById('acct-change-key-btn');
+    const headerStatus = document.getElementById('acct-header-status');
+
+    if (acct.api_key === '__saved__') {
+      keyField.value       = '';
+      keyField.placeholder = 'API key saved \u2014 click \u201cChange Key\u201d to replace';
+      keyField.disabled    = true;
+      changeBtn.style.display = '';
+      headerStatus.textContent = 'Configured';
+      headerStatus.className   = 'acct-header-status configured';
+    } else {
+      keyField.value       = acct.api_key || '';
+      keyField.disabled    = false;
+      changeBtn.style.display = 'none';
+      headerStatus.textContent = 'Not configured';
+      headerStatus.className   = 'acct-header-status unconfigured';
+    }
+
+    document.getElementById('acct-import-mpan').value   = acct.import_mpan   || '';
+    document.getElementById('acct-import-serial').value = acct.import_serial  || '';
+    document.getElementById('acct-export-mpan').value   = acct.export_mpan    || '';
+    document.getElementById('acct-export-serial').value = acct.export_serial  || '';
+
+    const hasExport = !!(acct.export_mpan || acct.export_serial);
+    document.getElementById('acct-has-export').checked = hasExport;
+    acctToggleExport(hasExport);
+
     _dirty = false;
     updateSaveBar();
   } catch(e) {
@@ -1013,11 +1161,23 @@ async function saveConfig() {
 
   _tariffs.forEach(t => { if (!t.id) t.id = slugify(t.name); });
 
+  // If the key field is disabled, the user has not changed it — send the
+  // sentinel so the backend leaves the stored key untouched.
+  const keyField  = document.getElementById('acct-api-key');
+  const apiKeyVal = keyField.disabled ? '__saved__' : keyField.value.trim();
+
   const payload = {
     mqtt_host:           host,
     mqtt_port:           port,
     timezone:            tz,
     baseline_tariff_id:  _baselineId,
+    octopus_account: {
+      api_key:        apiKeyVal,
+      import_mpan:    document.getElementById('acct-import-mpan').value.trim(),
+      import_serial:  document.getElementById('acct-import-serial').value.trim(),
+      export_mpan:    document.getElementById('acct-export-mpan').value.trim(),
+      export_serial:  document.getElementById('acct-export-serial').value.trim(),
+    },
     tariffs: _tariffs.filter(t => t.type !== 'octopus_flat' && t.type !== 'octopus_agile').map(t => {
       const base = {
         id:              t.id || slugify(t.name),
@@ -1442,93 +1602,262 @@ function octoToggleProduct(i, checked) {
 async function doOctoImport() {
   if (_octoSelectedSet.size === 0) return;
 
-  const region  = document.getElementById('octo-region').value;
-  const btn     = document.getElementById('octo-import-btn');
-  const status  = document.getElementById('octo-status');
-  const indices = [..._octoSelectedSet];
+  const btn    = document.getElementById('octo-import-btn');
+  const status = document.getElementById('octo-status');
+  const region = document.getElementById('octo-region').value;
 
-  btn.disabled = true;
-  status.className = '';
+  btn.disabled     = true;
+  status.textContent = '';
+  status.className   = '';
 
-  const results = { ok: [], fail: [] };
+  const indices  = [..._octoSelectedSet];
+  const total    = indices.length;
+  let   imported = 0;
+  let   failed   = 0;
 
-  for (let n = 0; n < indices.length; n++) {
-    const product = _octoProducts[indices[n]];
-    status.innerHTML = `<span class="spinner"></span> Importing ${n + 1} of ${indices.length}: ${escHtml(product.display_name || product.code)}&hellip;`;
-
+  for (const i of indices) {
+    const p = _octoProducts[i];
+    status.textContent = `Importing ${p.display_name || p.code}…`;
     try {
       const r = await fetch('/api/octopus/import-tariff', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          product_code: product.code,
-          gsp_region:   region,
-        }),
+        body:    JSON.stringify({ product_code: p.code, gsp_region: region }),
       });
       const d = await r.json();
       if (!d.success) throw new Error(d.error);
 
-      const regionLabels = {
-        '_A': 'East England',
-        '_B': 'East Midlands',
-        '_C': 'Lincolnshire / East Midlands',
-        '_D': 'London',
-        '_E': 'Merseyside / North Wales',
-        '_F': 'Midlands',
-        '_G': 'North West',
-        '_H': 'South East',
-        '_J': 'South',
-        '_K': 'South West',
-        '_L': 'Yorkshire',
-        '_M': 'North Scotland',
-        '_N': 'South Scotland',
-        '_P': 'North Wales / Mersey',
-      };
-      const regionLabel = regionLabels[region] || region;
-
-      const newTariff = {
-        id:              d.tariff_id,
-        name:            `${product.display_name || product.code} (${regionLabel})`,
-        type:            d.is_agile ? 'octopus_agile' : 'octopus_flat',
+      // Add to local _tariffs so it appears in the list without a page reload
+      _tariffs = _tariffs.filter(t => t.id !== d.tariff_id);
+      _tariffs.push({
+        id:             d.tariff_id,
+        name:           p.display_name || p.code,
+        type:           d.is_agile ? 'octopus_agile' : 'octopus_flat',
         standing_charge: String(d.standing_charge_p ?? '0'),
-        export_rate:     '0',
-        import_rate:     '',
-        slot_count:      d.rate_slots,
-        product_code:    d.product_code,
-        tariff_code:     d.tariff_code,
-        gsp_region:      region,
-        _open:           false,
-      };
-
-      const existingIdx = _tariffs.findIndex(t => t.id === d.tariff_id);
-      if (existingIdx >= 0) {
-        _tariffs[existingIdx] = newTariff;
-      } else {
-        _tariffs.push(newTariff);
-      }
-
-      results.ok.push(product.display_name || product.code);
+        export_rate:    '0',
+        import_rate:    d.is_agile ? '' : '',
+        slot_count:     d.rate_slots ?? null,
+        product_code:   d.product_code,
+        tariff_code:    d.tariff_code,
+        gsp_region:     d.gsp_region,
+        _open:          false,
+      });
+      imported++;
     } catch(e) {
-      results.fail.push(`${product.display_name || product.code} (${e.message})`);
+      failed++;
+      status.textContent = `✗ Failed to import ${p.display_name || p.code}: ${e.message}`;
+      status.className   = 'err';
     }
   }
 
-  renderTariffs();
+  if (imported > 0) {
+    renderTariffs();
+    markDirty();
+    status.textContent = imported === total
+      ? `✓ ${imported} tariff${imported > 1 ? 's' : ''} imported`
+      : `✓ ${imported} imported, ${failed} failed`;
+    status.className = failed > 0 ? 'err' : 'ok';
+    setTimeout(closeOctoModal, 1200);
+  }
 
-  if (results.fail.length === 0) {
-    status.className = 'ok';
-    status.textContent = `✓ Imported ${results.ok.length} tariff${results.ok.length > 1 ? 's' : ''}: ${results.ok.join(', ')}`;
-    toast(`${results.ok.length} Octopus tariff${results.ok.length > 1 ? 's' : ''} imported — run simulation to include them`, 'ok');
-    setTimeout(closeOctoModal, 1800);
-  } else if (results.ok.length === 0) {
-    status.className = 'err';
-    status.textContent = `✗ All imports failed: ${results.fail.join('; ')}`;
-    btn.disabled = false;
+  btn.disabled = _octoSelectedSet.size === 0;
+}
+
+// ── Octopus Account card helpers ───────────────────────────────────────────
+
+function octoToggleExport(show) {
+  document.getElementById('octo-export-fields').classList.toggle('visible', show);
+}
+
+function octoEnableKeyField(e) {
+  e.preventDefault();
+  const field = document.getElementById('octo-api-key');
+  field.disabled    = false;
+  field.value       = '';
+  field.placeholder = 'Enter new API key';
+  field.focus();
+  document.getElementById('octo-key-saved-hint').style.display = 'none';
+  markDirty();
+}
+
+function octoUpdateAccountStatus(acct) {
+  const el = document.getElementById('octo-account-status');
+  const hasKey  = acct?.api_key && acct.api_key !== '';
+  const hasMpan = acct?.import_mpan && acct.import_mpan !== '';
+  if (hasKey && hasMpan) {
+    el.textContent = '● Configured';
+    el.className   = 'configured';
   } else {
-    status.className = 'ok';
-    status.textContent = `✓ ${results.ok.length} imported, ${results.fail.length} failed: ${results.fail.join('; ')}`;
-    toast(`Partial import: ${results.ok.length} succeeded, ${results.fail.length} failed`, 'ok');
-    setTimeout(closeOctoModal, 2500);
+    el.textContent = '● Not configured';
+    el.className   = 'not-configured';
+  }
+}
+
+async function testOctopusConnection() {
+  const statusEl     = document.getElementById('octo-test-status');
+  const apiKeyField  = document.getElementById('octo-api-key');
+  const apiKey       = apiKeyField.disabled ? '__saved__' : apiKeyField.value.trim();
+  const importMpan   = document.getElementById('octo-import-mpan').value.trim();
+  const importSerial = document.getElementById('octo-import-serial').value.trim();
+
+  if (!importMpan || !importSerial) {
+    statusEl.textContent = '✗ Import MPAN and Serial Number are required to test';
+    statusEl.className   = 'err';
+    return;
+  }
+
+  statusEl.innerHTML = '<span class="spinner"></span> Testing connection&hellip;';
+  statusEl.className = '';
+
+  try {
+    const r = await fetch('/api/octopus/account/test', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ api_key: apiKey, import_mpan: importMpan, import_serial: importSerial }),
+    });
+    const d = await r.json();
+    if (d.success) {
+      statusEl.textContent = `✓ Connected — MPAN ${d.mpan}, GSP region ${d.gsp}, Profile class ${d.profile_class}`;
+      statusEl.className   = 'ok';
+      document.getElementById('octo-account-status').textContent = '● Configured';
+      document.getElementById('octo-account-status').className   = 'configured';
+    } else {
+      statusEl.textContent = '✗ ' + (d.error || 'Connection failed');
+      statusEl.className   = 'err';
+      document.getElementById('octo-account-status').textContent = '● Error';
+      document.getElementById('octo-account-status').className   = 'error';
+    }
+  } catch(e) {
+    statusEl.textContent = '✗ Request failed: ' + e.message;
+    statusEl.className   = 'err';
+  }
+}
+
+function acctToggleExport(show) {
+  document.getElementById('acct-export-fields').classList.toggle('visible', show);
+}
+
+function acctEnableKeyField() {
+  const keyField  = document.getElementById('acct-api-key');
+  const changeBtn = document.getElementById('acct-change-key-btn');
+  keyField.value       = '';
+  keyField.placeholder = 'Enter new API key';
+  keyField.disabled    = false;
+  changeBtn.style.display = 'none';
+  keyField.focus();
+  markDirty();
+}
+
+let _acctDetectedTariff = null;
+
+async function testOctopusAccount() {
+  const keyField     = document.getElementById('acct-api-key');
+  const statusEl     = document.getElementById('acct-status');
+  const detectedEl   = document.getElementById('acct-detected-tariff');
+  const apiKey       = keyField.disabled ? '__saved__' : keyField.value.trim();
+  const importMpan   = document.getElementById('acct-import-mpan').value.trim();
+  const importSerial = document.getElementById('acct-import-serial').value.trim();
+
+  _acctDetectedTariff = null;
+  detectedEl.style.display = 'none';
+
+  if (!importMpan) {
+    statusEl.textContent = '✗ Please enter your Import MPAN before testing.';
+    statusEl.className   = 'err';
+    return;
+  }
+
+  statusEl.innerHTML = '<span class="spinner"></span> Testing connection\u2026';
+  statusEl.className = '';
+
+  try {
+    const r = await fetch('/api/octopus/account/test', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ api_key: apiKey, import_mpan: importMpan, import_serial: importSerial }),
+    });
+    const d = await r.json();
+    if (!d.success) {
+      statusEl.textContent = '✗ ' + d.error;
+      statusEl.className   = 'err';
+      return;
+    }
+
+    statusEl.textContent = `✓ Connected — MPAN ${importMpan}, GSP ${d.gsp}, Profile class ${d.profile_class}`;
+    statusEl.className   = 'ok';
+
+    // If the API returned the active tariff code, show the detected tariff banner
+    if (d.active_tariff_code) {
+      _acctDetectedTariff = {
+        tariff_code:  d.active_tariff_code,
+        product_code: d.active_product_code,
+        gsp_region:   d.active_gsp_region,
+      };
+      document.getElementById('acct-dt-code').textContent = d.active_tariff_code;
+      detectedEl.style.display = 'block';
+
+      // Pre-select matching region in the Octopus modal if it was resolved
+      if (d.active_gsp_region) {
+        const regionSel = document.getElementById('octo-region');
+        const opt = [...regionSel.options].find(o => o.value === d.active_gsp_region);
+        if (opt) regionSel.value = d.active_gsp_region;
+      }
+    }
+
+  } catch(e) {
+    statusEl.textContent = '✗ Request failed: ' + e.message;
+    statusEl.className   = 'err';
+  }
+}
+
+async function acctImportDetectedTariff() {
+  if (!_acctDetectedTariff) return;
+
+  const btn      = document.getElementById('acct-dt-import-btn');
+  const statusEl = document.getElementById('acct-status');
+  btn.disabled   = true;
+  btn.textContent = 'Importing…';
+
+  try {
+    const r = await fetch('/api/octopus/import-tariff', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        product_code: _acctDetectedTariff.product_code,
+        tariff_code:  _acctDetectedTariff.tariff_code,
+        gsp_region:   _acctDetectedTariff.gsp_region,
+      }),
+    });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error);
+
+    // Add to tariff list
+    _tariffs = _tariffs.filter(t => t.id !== d.tariff_id);
+    _tariffs.push({
+      id:             d.tariff_id,
+      name:           _acctDetectedTariff.tariff_code,
+      type:           d.is_agile ? 'octopus_agile' : 'octopus_flat',
+      standing_charge: String(d.standing_charge_p ?? '0'),
+      export_rate:    '0',
+      import_rate:    '',
+      slot_count:     d.rate_slots ?? null,
+      product_code:   d.product_code,
+      tariff_code:    d.tariff_code,
+      gsp_region:     d.gsp_region,
+      _open:          false,
+    });
+
+    renderTariffs();
+    document.getElementById('acct-detected-tariff').style.display = 'none';
+    statusEl.textContent = `✓ Tariff ${_acctDetectedTariff.tariff_code} imported and added to simulation`;
+    statusEl.className   = 'ok';
+    toast('Tariff imported ✓', 'ok');
+
+  } catch(e) {
+    statusEl.textContent = '✗ Import failed: ' + e.message;
+    statusEl.className   = 'err';
+    btn.disabled   = false;
+    btn.textContent = '+ Import This Tariff';
   }
 }
 </script>
