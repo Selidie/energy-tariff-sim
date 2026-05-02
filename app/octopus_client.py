@@ -257,6 +257,33 @@ def test_account_credentials(api_key: str, import_mpan: str) -> dict:
     data = _get_auth(url, api_key)
     return data
 
+def get_account_agreements(api_key: str, account_number: str) -> list:
+    """
+    Fetch tariff agreements via the /v1/accounts/{account_number}/ endpoint.
+
+    Returns a list of agreement dicts with tariff_code, valid_from, valid_to,
+    or an empty list if the account cannot be fetched or has no agreements.
+    """
+    if not account_number:
+        return []
+
+    try:
+        account = _get_auth(f"{_BASE_URL}/accounts/{account_number}/", api_key)
+    except Exception as e:
+        log.warning("Could not fetch account detail for %s: %s", account_number, e)
+        return []
+
+    # Walk properties → electricity meter-points → agreements
+    agreements = []
+    for prop in account.get("properties", []):
+        for meter_point in prop.get("electricity_meter_points", []):
+            for agr in meter_point.get("agreements", []):
+                if agr.get("tariff_code"):
+                    agreements.append(agr)
+
+    log.info("Found %d agreement(s) for account %s", len(agreements), account_number)
+    return agreements
+
 
 def get_active_tariff_from_agreements(meter_point: dict) -> Optional[dict]:
     """

@@ -14,7 +14,6 @@ import re
 import yaml
 import requests
 import pandas as pd
-import datetime
 from collections import deque
 from datetime import datetime, timezone
 from flask import Flask, jsonify, request, send_file, Response, stream_with_context
@@ -53,7 +52,9 @@ def _save_octo_tariffs():
     octo = [t.to_dict() for t in _tariffs
             if isinstance(t, (OctopusFlatTariff, OctopusTimeOfUseTariff))]
     try:
-        os.makedirs(os.path.dirname(_OCTO_CACHE_PATH), exist_ok=True)
+        cache_dir = os.path.dirname(_OCTO_CACHE_PATH)
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
         with open(_OCTO_CACHE_PATH, 'w') as f:
             json.dump(octo, f)
         log.info('Saved %d Octopus tariff(s) to %s', len(octo), _OCTO_CACHE_PATH)
@@ -123,14 +124,10 @@ def _load_octo_tariffs() -> list:
 
 
 def _reload_tariffs():
-    """Reload standard tariffs from settings, then re-append persisted Octopus tariffs."""
     global _cfg, _tariffs
     _cfg     = cfg_module.load(_SETTINGS_PATH)
     _tariffs = load_tariffs(_cfg)
-    octo     = _load_octo_tariffs()
-    # Merge: skip any whose id already exists (shouldn't happen, but be safe)
-    existing_ids = {t.id for t in _tariffs}
-    _tariffs += [t for t in octo if t.id not in existing_ids]
+    _tariffs += _load_octo_tariffs()
 
 try:
     _cfg     = cfg_module.load(_SETTINGS_PATH)
@@ -140,6 +137,8 @@ try:
 except Exception as _boot_err:
     log.error('FATAL: Could not load config at startup: %s', _boot_err)
     raise
+
+_config_changed_at = datetime.now(timezone.utc).isoformat()
 
 
 def _tz()             -> str: return _cfg.get('simulation', {}).get('timezone', 'UTC')
@@ -156,22 +155,23 @@ def _ordered_tariffs():
 
 # ── Results persistence ────────────────────────────────────────────────────
 
-import datetime
-
 def _json_default(obj):
-    if isinstance(obj, (datetime.date, datetime.datetime)):
+    import datetime as _dt_module
+    if isinstance(obj, (_dt_module.date, _dt_module.datetime)):
         return obj.isoformat()
     raise TypeError(f'Object of type {type(obj)} is not JSON serializable')
 
 def _save_results(data: dict):
     path = _results_path()
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        parent = os.path.dirname(os.path.abspath(path))
+        os.makedirs(parent, exist_ok=True)
         data['saved_at'] = datetime.now(timezone.utc).isoformat()
         with open(path, 'w') as f:
             json.dump(data, f, default=_json_default)
+        log.info('Results saved to %s', path)
     except Exception as e:
-        log.warning('Could not save results: %s', e)
+        log.error('Could not save results to %s: %s', path, e)
 
 def _load_results():
     try:
@@ -235,6 +235,7 @@ def health():
         'history_range':      _history_range(),
         'bridge':             bridge,
         'has_results':        _load_results() is not None,
+        'config_changed_at':  _config_changed_at,
     })
 
 
@@ -321,15 +322,18 @@ def save_config():
             incoming_key = acct_in.get('api_key', '').strip()
             if incoming_key and incoming_key != '__saved__':
                 stored_acct['api_key'] = incoming_key
-            for field in ('import_mpan', 'import_serial', 'export_mpan', 'export_serial'):
+            for field in ('account_number', 'import_mpan', 'import_serial', 'export_mpan', 'export_serial'):
                 if field in acct_in:
                     stored_acct[field] = acct_in[field].strip()
 
         with open(_SETTINGS_PATH, 'w') as f:
             yaml.dump(current, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
+        global _config_changed_at
         _cfg     = cfg_module.load(_SETTINGS_PATH)
         _tariffs = load_tariffs(_cfg)
+        _tariffs += _load_octo_tariffs()
+        _config_changed_at = datetime.now(timezone.utc).isoformat()
         return jsonify({'success': True})
     except Exception as e:
         log.exception("Failed to save config")
@@ -484,7 +488,8 @@ def aggregate():
 def run_all():
     global _cfg, _tariffs
     try:
-        _reload_tariffs()
+        _cfg = cfg_module.load(_SETTINGS_PATH)
+        log.info('Running pipeline with %d tariff(s) — %s', len(_tariffs), [t.id for t in _tariffs])
         body = request.get_json(force=True, silent=True) or {}
         date_from, date_to = _extract_date_range(body)
 
@@ -761,7 +766,10 @@ def octopus_import_tariff():
 
         product_code = body.get("product_code", "").strip()
         if not product_code:
-            return jsonify({"success": False, "error": "product_code is required"}), 400
+            return jsonify({
+                "success": False, 
+                "error": "product_code is required"
+            }), 400
 
         gsp_region  = body.get("gsp_region", "_C").strip()
         tariff_code = body.get("tariff_code", "").strip()
@@ -824,7 +832,7 @@ def octopus_import_tariff():
             avg_rate = sum(unique_rates) / len(unique_rates)
             tariff_cfg = {
                 "id":             tariff_id,
-                "name":           f"{detail_name} ({gsp_region})",
+                "name":           f"{detail_name} ({_GSP_REGION_LABELS.get(gsp_region, gsp_region)})",
                 "standing_charge": standing_charge_p,
                 "export_rate":    0.0,
                 "import_rate":    avg_rate,
@@ -854,7 +862,9 @@ def octopus_import_tariff():
         log.info("Imported Octopus tariff %s (%s) — %d rate slots, standing %.2fp/day",
                  tariff_id, tariff_code, len(rates), standing_charge_p)
 
+        global _config_changed_at
         _save_octo_tariffs()
+        _config_changed_at = datetime.now(timezone.utc).isoformat()
 
         return jsonify({
             "success":          True,
@@ -867,6 +877,7 @@ def octopus_import_tariff():
             "standing_charge_p": standing_charge_p,
             "date_from":        date_from.date().isoformat(),
             "date_to":          date_to.date().isoformat(),
+            "tariff_name":      new_tariff.name,   # ← add this line
         })
 
     except requests.exceptions.ConnectionError as e:
@@ -881,11 +892,12 @@ def octopus_import_tariff():
 @app.delete("/api/octopus/tariff/<tariff_id>")
 def octopus_remove_tariff(tariff_id):
     """Remove a previously imported Octopus tariff from the in-memory list."""
-    global _tariffs
+    global _tariffs, _config_changed_at
     before = len(_tariffs)
     _tariffs = [t for t in _tariffs if t.id != tariff_id]
     removed = before - len(_tariffs)
     _save_octo_tariffs()
+    _config_changed_at = datetime.now(timezone.utc).isoformat()
     return jsonify({"success": True, "removed": removed})
 
 
@@ -927,7 +939,20 @@ def octopus_account_test():
 
         meter_point = _octo.test_account_credentials(api_key, import_mpan)
 
-        active_agr   = _octo.get_active_tariff_from_agreements(meter_point)
+        active_agr = _octo.get_active_tariff_from_agreements(meter_point)
+
+        # Meter-point endpoint sometimes returns empty agreements — fall back
+        # to the richer /v1/accounts/ endpoint which includes full agreement history
+        if not active_agr:
+            account_number = body.get('account_number', '').strip()
+            # Also fall back to the saved config if not supplied in the request
+            if not account_number:
+                account_number = _cfg.get('octopus_account', {}).get('account_number', '').strip()
+            log.info("No agreements on meter-point response, trying account API with %s", account_number)
+            account_agreements = _octo.get_account_agreements(api_key, account_number)
+            synthetic = {"agreements": account_agreements}
+            active_agr = _octo.get_active_tariff_from_agreements(synthetic)
+
         active_code  = active_agr.get('tariff_code', '') if active_agr else ''
         parsed       = _octo.parse_tariff_code(active_code)
 
