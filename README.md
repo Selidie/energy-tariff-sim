@@ -9,26 +9,36 @@ Data is pulled from **mqtt-bridge** (which reads from InfluxDB), converted into 
 ## Architecture
 
 ```
-Solar Assistant MQTT
-        │
-        ▼
-  mqtt-bridge :5003
-  (InfluxDB backend)
-        │  /history
-        ▼
-    ingest.py          pulls raw W readings → raw Parquet
-        │
-        ▼
-   aggregate.py        W → 30-min kWh intervals → aggregated Parquet
-        │
-        ▼
-   simulate.py         replay against N tariffs
-        │
-        ▼
-   compare_tariffs()   builds summary + daily/monthly/yearly tables
-        │
-        ▼
-   ui.html / api.py    web UI + REST API  :5011
+Solar Assistant MQTT          Octopus Personal API
+        │                              │
+        ▼                              ▼
+  mqtt-bridge :5003           octopus_client.py
+  (InfluxDB backend)          half-hourly kWh (pre-aggregated)
+        │                              │
+   ┌────┴────────────┐                 │
+   │                 │                 │
+   ▼ (primary)       ▼ (fallback)      │
+Direct InfluxDB   mqtt-bridge          │
+chunked Flux      /history             │
+queries           (no INFLUX_* vars)   │
+   │                 │                 │
+   └────────┬────────┘                 │
+            ▼                          │
+        ingest.py → raw Parquet        │
+            │                          │
+            ▼                          │
+       aggregate.py → aggregated Parquet
+            │                          │
+            └──────────────────────────┘
+                        │
+                        ▼
+                  simulate.py      ← tariffs from config / Octopus API
+                        │
+                        ▼
+               compare_tariffs()
+                        │
+                        ▼
+              ui.html / api.py  :5011
 ```
 
 Only **`grid_power`** is required. Positive values = import from grid; negative values = export to grid.
@@ -108,6 +118,17 @@ tariffs:
       end:   "07:00"
 ```
 
+### Octopus Account
+```yaml
+  octopus_account:
+    api_key:        "sk_live_..."
+    account_number: "A-XXXX1234"
+    import_mpan:    "1234567890123"
+    import_serial:  "A1B2C3D4"
+    export_mpan:    "9876543210987"   # optional
+    export_serial:  "E5F6G7H8"       # optional
+```
+
 Octopus Energy tariffs are not hand-written in settings.yaml — they are fetched live from the Octopus Energy public API via the Config UI at /config. Two types are supported:
 
 octopus_flat — a single static import rate; behaves like a flat tariff once imported
@@ -177,15 +198,24 @@ Topic names written by the import match the live mqtt-bridge schema (`inverter_1
 | GET | `/api/bridge/topics` | All topics seen by mqtt-bridge |
 | GET | `/api/bridge/topics/numeric` | Numeric topics only |
 | GET | `/api/bridge/diagnose` | Full bridge diagnostic — MQTT status, InfluxDB, topic mapping |
-| GET | `/api/sa-import/stream` | Start and stream the import process (SSE) |
+| GET | `/api/octopus/products` | List Octopus Electricity products |
+| GET | `/api/octopus/products/<product code>` | Full details for one Octopus Electricity product |
+| GET | `/api/octopus/products/<product code>/tariff-codes` | GSP region > tariff code map |
+| GET | `/api/sa-import/log` | Tail the last import log |
 | GET | `/api/sa-import/status` | Poll import progress |
 | POST | `/api/sa-import/clear` | Clear the uploaded backup file |
 | POST | `/run` | Full pipeline: ingest → aggregate → simulate. Accepts optional `date_from` / `date_to` (JSON body) |
 | POST | `/ingest` | Fetch from mqtt-bridge, save raw Parquet. Accepts optional `date_from` / `date_to` |
 | POST | `/aggregate` | Convert raw Parquet → 30-min kWh intervals |
 | POST | `/api/config` | Save updated settings (reloads config + tariffs live) |
+| POST | `/api/sa-import/start` | Start import background process |
 | POST | `/api/sa-import/upload` | Upload a Solar Assistant backup `.zip` |
+| POST | `/api/octopus/account/test` | Validate Octopus API key + MPAN |
+| POST | `/api/octopus/account/fetch-consumption` | Pull half-hourly consumption from Octopus |
+| POST | `/api/octopus/import-tariff` | Fetch & load an Octopus tariff into memory |
 | DELETE | `/api/results` | Clear saved results |
+| DELETE | `/api/octopus/tariff/<tariff_id>` | Remove an imported Octopus tariff |
+| DELETE | `/api/octopus/cache` | Clear local Octopus API cache |
 
 ### Date range on `/run` and `/ingest`
 
@@ -265,7 +295,7 @@ services:
       - ./config:/app/config
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      # Required only for Solar Assistant backup import — not needed for normal operation.
+      # Used for direct InfluxDB ingest (recommended for production) and Solar Assistant backup import.
       # These should match the InfluxDB instance managed by mqtt-bridge.
       # - INFLUX_URL=http://influxdb:8086
       # - INFLUX_TOKEN=your_token
@@ -282,14 +312,21 @@ services:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `INFLUX_URL` | — | InfluxDB 2.x base URL (e.g. `http://influxdb:8086`) — **SA import only** |
-| `INFLUX_TOKEN` | — | InfluxDB authentication token — **SA import only** |
+| `CONFIG_PATH` | `config/settings.yaml` | Override path for settings.yaml |
+| `INFLUX_URL`   | — | InfluxDB 2.x base URL — production ingest + SA import |
+| `INFLUX_TOKEN` | — | InfluxDB auth token — production ingest + SA import   |
 | `INFLUX_ORG` | — | InfluxDB organisation name — **SA import only** |
 | `INFLUX_BUCKET` | — | InfluxDB bucket name — **SA import only** |
+| `OCTO_CACHE_PATH` | `/app/data/octopus_tariffs.json` | Path for persisted in-memory Octopus tariffs |
 | `OCTOPUS_CACHE_DIR` | `/app/data/octopus_cache` | Directory for caching Octopus API responses |
 | `OCTOPUS_CACHE_TTL` | `3600` | Cache TTL in seconds (default: 1 hour) |
+| `PORT` | `5011` | Flask listen port |
 
-> The `INFLUX_*` variables are only required if you use the **Solar Assistant backup import** feature. Normal operation (ingesting live data via mqtt-bridge and running simulations) does not require them to be set.
+> INFLUX_URL and INFLUX_TOKEN serve two distinct purposes:
+Production ingest (primary data path): When INFLUX_URL and INFLUX_TOKEN are set, ingest.py queries InfluxDB directly using chunked Flux queries. This is the recommended path for production — it avoids the mqtt-bridge /history HTTP timeout on large date ranges.
+Solar Assistant backup import: The same variables are used by sa_import.py to write restored backup data into InfluxDB 2.x.
+If neither variable is set, ingest falls back to the mqtt-bridge /history endpoint — suitable for development or small date ranges.
+INFLUX_ORG and INFLUX_BUCKET apply to both use cases and default to home and solar respectively.
 ---
 
 ## File layout
@@ -314,15 +351,16 @@ energy-tariff-sim/
 ├── config/
 │   └── settings.yaml   # All runtime configuration
 ├── data/
-│   ├── raw/            # Raw Parquet files from ingest
-│   ├── aggregated/     # 30-min interval Parquet files
-│   ├── octopus_cache   # Cached Octopus Energy Tariffs
-│   └── results.json    # Last simulation results (persisted)
+│   ├── raw/                  # Raw Parquet files from ingest
+│   ├── aggregated/           # 30-min interval Parquet files
+│   ├── octopus_cache         # Cached Octopus Energy tariffs
+│   ├── octopus_tariffs.json  # Persisted in-memory Octopus tariffs 
+│   └── results.json          # Last simulation results (persisted)
 ├── scripts/
-│   ├── README.md       # Full Solar Assistant import guide
-│   ├── sa_import.py    # Import a Solar Assistant backup into InfluxDB 2.x
-│   ├── sa_inspect.py   # Inspect a backup zip without importing
-│   └── sa_probe.sh     # Debug a running temporary InfluxDB 1.x container
+│   ├── README.md             # Full Solar Assistant import guide
+│   ├── sa_import.py          # Import a Solar Assistant backup into InfluxDB 2.x
+│   ├── sa_inspect.py         # Inspect a backup zip without importing
+│   └── sa_probe.sh           # Debug a running temporary InfluxDB 1.x container
 ├── Dockerfile
 ├── docker-compose.yml
 └── requirements.txt

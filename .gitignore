@@ -3,6 +3,8 @@ venv/
 data/raw/
 data/aggregated/
 data/sa_staging/
+data/octopus_cache/
+data/*.json
 __pycache__/
 *.pyc
 *.pyo
