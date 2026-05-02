@@ -13,12 +13,13 @@ import time
 import re
 import yaml
 import requests
+import pandas as pd
 from collections import deque
 from datetime import datetime, timezone
 from flask import Flask, jsonify, request, send_file, Response, stream_with_context
 from flask_cors import CORS
 from app import config as cfg_module
-from app.ingest import run_ingest, load_raw, check_bridge
+from app.ingest import run_ingest, run_octopus_ingest, has_octopus_account, load_raw, check_bridge
 from app.aggregate import run_aggregate, load_aggregated
 from app.tariffs import load_tariffs
 from app.simulate import (compare_tariffs, simulate_tariff,
@@ -51,7 +52,9 @@ def _save_octo_tariffs():
     octo = [t.to_dict() for t in _tariffs
             if isinstance(t, (OctopusFlatTariff, OctopusTimeOfUseTariff))]
     try:
-        os.makedirs(os.path.dirname(_OCTO_CACHE_PATH), exist_ok=True)
+        cache_dir = os.path.dirname(_OCTO_CACHE_PATH)
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
         with open(_OCTO_CACHE_PATH, 'w') as f:
             json.dump(octo, f)
         log.info('Saved %d Octopus tariff(s) to %s', len(octo), _OCTO_CACHE_PATH)
@@ -61,7 +64,6 @@ def _save_octo_tariffs():
 
 def _load_octo_tariffs() -> list:
     """Reload persisted Octopus tariffs from disk and return as tariff objects."""
-    from app.tariffs import OctopusFlatTariff, OctopusTimeOfUseTariff
     try:
         with open(_OCTO_CACHE_PATH, 'r') as f:
             entries = json.load(f)
@@ -92,6 +94,7 @@ def _load_octo_tariffs() -> list:
                 # For time-of-use tariffs we need the raw rates — stored in
                 # the octopus_client cache, so re-fetch from there
                 from app import octopus_client as _octo
+                from app.ingest import has_octopus_account, run_octopus_ingest
                 from datetime import datetime as _dt, timezone as _tz_mod
                 product_code = entry.get('product_code', '')
                 tariff_code  = entry.get('tariff_code', '')
@@ -121,14 +124,10 @@ def _load_octo_tariffs() -> list:
 
 
 def _reload_tariffs():
-    """Reload standard tariffs from settings, then re-append persisted Octopus tariffs."""
     global _cfg, _tariffs
     _cfg     = cfg_module.load(_SETTINGS_PATH)
     _tariffs = load_tariffs(_cfg)
-    octo     = _load_octo_tariffs()
-    # Merge: skip any whose id already exists (shouldn't happen, but be safe)
-    existing_ids = {t.id for t in _tariffs}
-    _tariffs += [t for t in octo if t.id not in existing_ids]
+    _tariffs += _load_octo_tariffs()
 
 try:
     _cfg     = cfg_module.load(_SETTINGS_PATH)
@@ -138,6 +137,8 @@ try:
 except Exception as _boot_err:
     log.error('FATAL: Could not load config at startup: %s', _boot_err)
     raise
+
+_config_changed_at = datetime.now(timezone.utc).isoformat()
 
 
 def _tz()             -> str: return _cfg.get('simulation', {}).get('timezone', 'UTC')
@@ -154,15 +155,23 @@ def _ordered_tariffs():
 
 # ── Results persistence ────────────────────────────────────────────────────
 
+def _json_default(obj):
+    import datetime as _dt_module
+    if isinstance(obj, (_dt_module.date, _dt_module.datetime)):
+        return obj.isoformat()
+    raise TypeError(f'Object of type {type(obj)} is not JSON serializable')
+
 def _save_results(data: dict):
     path = _results_path()
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        parent = os.path.dirname(os.path.abspath(path))
+        os.makedirs(parent, exist_ok=True)
         data['saved_at'] = datetime.now(timezone.utc).isoformat()
         with open(path, 'w') as f:
-            json.dump(data, f)
+            json.dump(data, f, default=_json_default)
+        log.info('Results saved to %s', path)
     except Exception as e:
-        log.warning('Could not save results: %s', e)
+        log.error('Could not save results to %s: %s', path, e)
 
 def _load_results():
     try:
@@ -226,6 +235,7 @@ def health():
         'history_range':      _history_range(),
         'bridge':             bridge,
         'has_results':        _load_results() is not None,
+        'config_changed_at':  _config_changed_at,
     })
 
 
@@ -246,6 +256,11 @@ def get_config():
         ]
         if octo_tariffs:
             raw.setdefault('octopus_tariffs', octo_tariffs)
+
+        # Mask the stored API key — send a sentinel so the UI can show
+        # "key saved" without echoing the real value to the browser.
+        if raw.get('octopus_account', {}).get('api_key', '').strip():
+            raw.setdefault('octopus_account', {})['api_key'] = '__saved__'
 
         return jsonify({'success': True, 'config': raw})
     except Exception as e:
@@ -298,11 +313,27 @@ def save_config():
         if built:
             current['tariffs'] = built
 
+        # Persist Octopus account credentials.
+        # If the incoming api_key is the masked sentinel '__saved__', leave
+        # the stored key untouched — the user has not changed it.
+        acct_in = body.get('octopus_account', {})
+        if acct_in:
+            stored_acct = current.setdefault('octopus_account', {})
+            incoming_key = acct_in.get('api_key', '').strip()
+            if incoming_key and incoming_key != '__saved__':
+                stored_acct['api_key'] = incoming_key
+            for field in ('account_number', 'import_mpan', 'import_serial', 'export_mpan', 'export_serial'):
+                if field in acct_in:
+                    stored_acct[field] = acct_in[field].strip()
+
         with open(_SETTINGS_PATH, 'w') as f:
             yaml.dump(current, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
+        global _config_changed_at
         _cfg     = cfg_module.load(_SETTINGS_PATH)
         _tariffs = load_tariffs(_cfg)
+        _tariffs += _load_octo_tariffs()
+        _config_changed_at = datetime.now(timezone.utc).isoformat()
         return jsonify({'success': True})
     except Exception as e:
         log.exception("Failed to save config")
@@ -402,6 +433,26 @@ def _extract_date_range(body: dict) -> tuple:
     return body.get('date_from') or None, body.get('date_to') or None
 
 
+def _slice_agg_df(agg_df, date_from, date_to):
+    """Slice a DatetimeIndex DataFrame to [date_from, date_to] inclusive."""
+    if agg_df.empty:
+        return agg_df
+    # Normalise index to UTC to ensure consistent date comparisons
+    idx = agg_df.index
+    if hasattr(idx, 'tz') and idx.tz is not None:
+        idx_utc = idx.tz_convert('UTC')
+    else:
+        idx_utc = pd.to_datetime(idx, utc=True)
+    mask = pd.Series(True, index=agg_df.index)
+    if date_from:
+        cutoff = pd.Timestamp(date_from, tz='UTC')
+        mask &= idx_utc >= cutoff
+    if date_to:
+        cutoff = pd.Timestamp(date_to, tz='UTC') + pd.Timedelta(days=1)
+        mask &= idx_utc < cutoff
+    return agg_df[mask.values]
+
+
 @app.post('/ingest')
 def ingest():
     global _cfg
@@ -437,17 +488,52 @@ def aggregate():
 def run_all():
     global _cfg, _tariffs
     try:
-        _reload_tariffs()
+        _cfg = cfg_module.load(_SETTINGS_PATH)
+        log.info('Running pipeline with %d tariff(s) — %s', len(_tariffs), [t.id for t in _tariffs])
         body = request.get_json(force=True, silent=True) or {}
         date_from, date_to = _extract_date_range(body)
-        raw_df, diag = run_ingest(_cfg, date_from=date_from, date_to=date_to)
-        if raw_df.empty:
-            return jsonify({'success': False, 'error': diag.get('reason', 'Ingest returned no data'), 'diag': diag}), 502
-        agg_df = run_aggregate(_cfg, raw_df)
+
+        agg_df  = None
+        diag    = {}
+        data_source = 'solar_assistant'
+
+        if has_octopus_account(_cfg):
+            log.info('Octopus account configured — attempting Octopus API ingest')
+            fresh_df, diag = run_octopus_ingest(_cfg, date_from=date_from, date_to=date_to)
+            if fresh_df.empty:
+                log.warning(
+                    'Octopus ingest returned no data (%s) — falling back to SA/InfluxDB path',
+                    diag.get('reason', '?'),
+                )
+                data_source = 'solar_assistant_fallback'
+            else:
+                data_source = 'octopus_api'
+                # Merge the fresh Octopus fetch into the full stored dataset,
+                # then slice to the requested date range for simulation.
+                stored_df = load_aggregated(_cfg['storage']['aggregated_path'])
+                if not stored_df.empty:
+                    agg_df = pd.concat([stored_df, fresh_df])
+                    agg_df = agg_df[~agg_df.index.duplicated(keep='last')]
+                    agg_df = agg_df.sort_index()
+                else:
+                    agg_df = fresh_df
+                agg_df = _slice_agg_df(agg_df, date_from, date_to)
+
+        if agg_df is None:
+            raw_df, diag = run_ingest(_cfg, date_from=date_from, date_to=date_to)
+            if raw_df.empty:
+                return jsonify({'success': False, 'error': diag.get('reason', 'Ingest returned no data'), 'diag': diag}), 502
+            agg_df = run_aggregate(_cfg, raw_df)
+            if agg_df.empty:
+                return jsonify({'success': False, 'error': 'Aggregation produced no intervals'}), 500
+            agg_df = _slice_agg_df(agg_df, date_from, date_to)
+
         if agg_df.empty:
-            return jsonify({'success': False, 'error': 'Aggregation produced no intervals'}), 500
+            return jsonify({'success': False, 'error': 'No data in selected date range'}), 400
+
         result = compare_tariffs(agg_df, _ordered_tariffs(), tz=_tz())
         result['baseline_id'] = _baseline_id() or result.get('baseline_id')
+        result['data_source'] = data_source
         _save_results(result)
         return jsonify({'success': True, **result})
     except Exception as e:
@@ -461,6 +547,11 @@ def simulate():
         agg_df = load_aggregated(_cfg['storage']['aggregated_path'])
         if agg_df.empty:
             return jsonify({'success': False, 'error': 'No aggregated data — run ingest + aggregate first'}), 400
+        date_from = request.args.get('date_from') or None
+        date_to   = request.args.get('date_to')   or None
+        agg_df = _slice_agg_df(agg_df, date_from, date_to)
+        if agg_df.empty:
+            return jsonify({'success': False, 'error': 'No data in selected date range'}), 400
         result = compare_tariffs(agg_df, _ordered_tariffs(), tz=_tz())
         result['baseline_id'] = _baseline_id() or result.get('baseline_id')
         _save_results(result)
@@ -495,6 +586,11 @@ def results_daily():
         agg_df = load_aggregated(_cfg['storage']['aggregated_path'])
         if agg_df.empty:
             return jsonify({'success': False, 'error': 'No aggregated data'}), 400
+        date_from = request.args.get('date_from') or None
+        date_to   = request.args.get('date_to')   or None
+        agg_df = _slice_agg_df(agg_df, date_from, date_to)
+        if agg_df.empty:
+            return jsonify({'success': False, 'error': 'No data in selected date range'}), 400
         detail = simulate_tariff(agg_df, tariff, tz=_tz())
         daily  = daily_summary(detail, tz=_tz()).reset_index().to_dict(orient='records')
         return jsonify({'success': True, 'tariff_id': tariff.id, 'daily': daily})
@@ -513,6 +609,11 @@ def results_monthly():
         agg_df = load_aggregated(_cfg['storage']['aggregated_path'])
         if agg_df.empty:
             return jsonify({'success': False, 'error': 'No aggregated data'}), 400
+        date_from = request.args.get('date_from') or None
+        date_to   = request.args.get('date_to')   or None
+        agg_df = _slice_agg_df(agg_df, date_from, date_to)
+        if agg_df.empty:
+            return jsonify({'success': False, 'error': 'No data in selected date range'}), 400
         detail  = simulate_tariff(agg_df, tariff, tz=_tz())
         daily   = daily_summary(detail, tz=_tz())
         monthly = monthly_summary(daily)
@@ -533,6 +634,11 @@ def results_yearly():
         agg_df = load_aggregated(_cfg['storage']['aggregated_path'])
         if agg_df.empty:
             return jsonify({'success': False, 'error': 'No aggregated data'}), 400
+        date_from = request.args.get('date_from') or None
+        date_to   = request.args.get('date_to')   or None
+        agg_df = _slice_agg_df(agg_df, date_from, date_to)
+        if agg_df.empty:
+            return jsonify({'success': False, 'error': 'No data in selected date range'}), 400
         detail = simulate_tariff(agg_df, tariff, tz=_tz())
         daily  = daily_summary(detail, tz=_tz())
         yearly = yearly_summary(daily)
@@ -660,7 +766,10 @@ def octopus_import_tariff():
 
         product_code = body.get("product_code", "").strip()
         if not product_code:
-            return jsonify({"success": False, "error": "product_code is required"}), 400
+            return jsonify({
+                "success": False, 
+                "error": "product_code is required"
+            }), 400
 
         gsp_region  = body.get("gsp_region", "_C").strip()
         tariff_code = body.get("tariff_code", "").strip()
@@ -723,7 +832,7 @@ def octopus_import_tariff():
             avg_rate = sum(unique_rates) / len(unique_rates)
             tariff_cfg = {
                 "id":             tariff_id,
-                "name":           f"{detail_name} ({gsp_region})",
+                "name":           f"{detail_name} ({_GSP_REGION_LABELS.get(gsp_region, gsp_region)})",
                 "standing_charge": standing_charge_p,
                 "export_rate":    0.0,
                 "import_rate":    avg_rate,
@@ -753,7 +862,9 @@ def octopus_import_tariff():
         log.info("Imported Octopus tariff %s (%s) — %d rate slots, standing %.2fp/day",
                  tariff_id, tariff_code, len(rates), standing_charge_p)
 
+        global _config_changed_at
         _save_octo_tariffs()
+        _config_changed_at = datetime.now(timezone.utc).isoformat()
 
         return jsonify({
             "success":          True,
@@ -766,6 +877,7 @@ def octopus_import_tariff():
             "standing_charge_p": standing_charge_p,
             "date_from":        date_from.date().isoformat(),
             "date_to":          date_to.date().isoformat(),
+            "tariff_name":      new_tariff.name,   # ← add this line
         })
 
     except requests.exceptions.ConnectionError as e:
@@ -780,11 +892,12 @@ def octopus_import_tariff():
 @app.delete("/api/octopus/tariff/<tariff_id>")
 def octopus_remove_tariff(tariff_id):
     """Remove a previously imported Octopus tariff from the in-memory list."""
-    global _tariffs
+    global _tariffs, _config_changed_at
     before = len(_tariffs)
     _tariffs = [t for t in _tariffs if t.id != tariff_id]
     removed = before - len(_tariffs)
     _save_octo_tariffs()
+    _config_changed_at = datetime.now(timezone.utc).isoformat()
     return jsonify({"success": True, "removed": removed})
 
 
@@ -796,6 +909,114 @@ def octopus_clear_cache():
         return jsonify({"success": True, "files_removed": removed})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.post("/api/octopus/account/test")
+def octopus_account_test():
+    """
+    Validate an Octopus API key against a supplied MPAN without persisting
+    anything.  If the api_key in the request body is the sentinel '__saved__',
+    the stored key from settings is used instead.
+
+    Expected JSON body:
+      { "api_key": "<key or __saved__>", "import_mpan": "...", "import_serial": "..." }
+    """
+    try:
+        body         = request.get_json(force=True) or {}
+        import_mpan  = body.get('import_mpan', '').strip()
+        import_serial = body.get('import_serial', '').strip()
+        api_key      = body.get('api_key', '').strip()
+
+        # Change to — only require MPAN
+        if not import_mpan:
+            return jsonify({'success': False, 'error': 'import_mpan is required'}), 400
+
+        # Resolve sentinel — use the key stored in settings
+        if api_key == '__saved__' or not api_key:
+            api_key = _cfg.get('octopus_account', {}).get('api_key', '').strip()
+        if not api_key:
+            return jsonify({'success': False, 'error': 'No API key provided or saved'}), 400
+
+        meter_point = _octo.test_account_credentials(api_key, import_mpan)
+
+        active_agr = _octo.get_active_tariff_from_agreements(meter_point)
+
+        # Meter-point endpoint sometimes returns empty agreements — fall back
+        # to the richer /v1/accounts/ endpoint which includes full agreement history
+        if not active_agr:
+            account_number = body.get('account_number', '').strip()
+            # Also fall back to the saved config if not supplied in the request
+            if not account_number:
+                account_number = _cfg.get('octopus_account', {}).get('account_number', '').strip()
+            log.info("No agreements on meter-point response, trying account API with %s", account_number)
+            account_agreements = _octo.get_account_agreements(api_key, account_number)
+            synthetic = {"agreements": account_agreements}
+            active_agr = _octo.get_active_tariff_from_agreements(synthetic)
+
+        active_code  = active_agr.get('tariff_code', '') if active_agr else ''
+        parsed       = _octo.parse_tariff_code(active_code)
+
+        return jsonify({
+            'success':        True,
+            'mpan':           meter_point.get('mpan', import_mpan),
+            'gsp':            meter_point.get('gsp', ''),
+            'profile_class':  meter_point.get('profile_class', ''),
+            'active_tariff_code':  active_code,
+            'active_product_code': parsed['product_code'],
+            'active_gsp_region':   parsed['gsp_region'] or meter_point.get('gsp', ''),
+            'agreements':     meter_point.get('agreements', []),
+        })
+
+    except requests.exceptions.HTTPError as e:
+        status = e.response.status_code if e.response is not None else 0
+        if status == 401:
+            return jsonify({'success': False, 'error': 'Invalid API key (401 Unauthorised)'}), 200
+        if status == 403:
+            return jsonify({'success': False, 'error': 'API key does not have access to this MPAN (403 Forbidden)'}), 200
+        if status == 404:
+            return jsonify({'success': False, 'error': 'MPAN not found (404)'}), 200
+        return jsonify({'success': False, 'error': f'Octopus API error: {e}'}), 200
+    except Exception as e:
+        log.exception('octopus_account_test failed')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.post("/api/octopus/account/fetch-consumption")
+def octopus_fetch_consumption():
+    """
+    Pull half-hourly consumption data from the Octopus API using the saved
+    account credentials and write it to the aggregated data store.
+
+    Optional JSON body:
+      { "date_from": "YYYY-MM-DD", "date_to": "YYYY-MM-DD" }
+    """
+    try:
+        if not has_octopus_account(_cfg):
+            return jsonify({
+                'success': False,
+                'error':   'Octopus account credentials not fully configured — save API key, MPAN, and serial first',
+            }), 400
+
+        body = request.get_json(force=True, silent=True) or {}
+        date_from, date_to = _extract_date_range(body)
+
+        agg_df, diag = run_octopus_ingest(_cfg, date_from=date_from, date_to=date_to)
+
+        if agg_df.empty:
+            return jsonify({'success': False, 'error': diag.get('reason', 'No data returned'), 'diag': diag}), 502
+
+        return jsonify({
+            'success':     True,
+            'intervals':   diag.get('rows', len(agg_df)),
+            'date_from':   diag.get('date_from', ''),
+            'date_to':     diag.get('date_to', ''),
+            'has_export':  diag.get('has_export', False),
+            'data_source': diag.get('data_source', 'octopus_api'),
+        })
+
+    except Exception as e:
+        log.exception('octopus_fetch_consumption failed')
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 def _parse_history_days(history_range: str) -> int:

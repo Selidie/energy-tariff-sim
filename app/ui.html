@@ -134,6 +134,16 @@
   .date-range-row input[type="date"]:focus { outline: none; border-color: var(--accent); }
   .date-range-sep { color: var(--muted); font-size: 12px; }
   .date-range-hint { font-size: 11px; color: var(--muted); font-style: italic; margin-left: auto; }
+
+  /* ── Data source badge ── */
+  .data-source-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 500; padding: 4px 10px;
+    border-radius: 5px; margin-bottom: 14px;
+  }
+  .data-source-badge.octopus  { background: rgba(52,211,153,.1);  color: var(--accent2); border: 1px solid rgba(52,211,153,.3); }
+  .data-source-badge.sa       { background: rgba(79,142,247,.1);  color: var(--accent);  border: 1px solid rgba(79,142,247,.3); }
+  .data-source-badge.fallback { background: rgba(251,191,36,.1);  color: var(--warning); border: 1px solid rgba(251,191,36,.3); }
 </style>
 </head>
 <body>
@@ -156,6 +166,11 @@
 
   <div class="card">
     <h2>Pipeline</h2>
+
+    <!-- Stale results warning -->
+    <div id="stale-banner" style="display:none;margin-bottom:12px;padding:10px 14px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:8px;font-size:13px;color:var(--warning)">
+      &#9888; Configuration has changed since the last pipeline run &mdash; results may be outdated. Re-run the pipeline to update.
+    </div>
 
     <!-- Date range selector -->
     <div class="date-range-row">
@@ -322,11 +337,12 @@ async function checkHealth() {
     const d = await (await fetch(`${API}/health`)).json();
     document.getElementById('status-dot').className = 'ok';
     document.getElementById('header-status').textContent =
-      `API OK \u00b7 ${d.tariffs?.length ?? 0} tariff(s) \u00b7 ${d.history_range || '700d'} history`;
+      `API OK · ${d.tariffs?.length ?? 0} tariff(s) · ${d.history_range || '700d'} history`;
     if (!_versionChecked) {
       _versionChecked = true;
       checkVersion(d.version || 'dev');
     }
+    _checkStaleResults(d.config_changed_at);
   } catch {
     document.getElementById('status-dot').className = 'err';
     document.getElementById('header-status').textContent = 'API unreachable';
@@ -335,11 +351,14 @@ async function checkHealth() {
 
 // ── Saved results ─────────────────────────────────────────────────────────
 
+let _lastResultsSavedAt = null;
+
 async function loadSavedResults() {
   try {
     const d = await (await fetch(`${API}/api/results`)).json();
     if (d.success && d.results) {
       renderComparison(d.results);
+      _lastResultsSavedAt = d.results.saved_at || null;
       if (d.results.saved_at) {
         const dt = new Date(d.results.saved_at);
         document.getElementById('saved-at-label').textContent =
@@ -348,6 +367,17 @@ async function loadSavedResults() {
       document.getElementById('clear-btn').style.display = '';
     }
   } catch {}
+}
+
+function _checkStaleResults(configChangedAt) {
+  const banner = document.getElementById('stale-banner');
+  if (!banner) return;
+  if (!_lastResultsSavedAt || !configChangedAt) {
+    banner.style.display = 'none';
+    return;
+  }
+  banner.style.display =
+    new Date(configChangedAt) > new Date(_lastResultsSavedAt) ? '' : 'none';
 }
 
 async function clearResults() {
@@ -460,14 +490,22 @@ async function runAggregate() {
 }
 
 async function runSimulate() {
+  const range = getDateRange();
   log('Simulating\u2026', 'info');
   setBusy('btn-simulate', 'Simulating\u2026');
   try {
-    const d = await (await fetch(`${API}/simulate`)).json();
+    const params = new URLSearchParams();
+    if (range.date_from) params.set('date_from', range.date_from);
+    if (range.date_to)   params.set('date_to',   range.date_to);
+    const url = `${API}/simulate${params.toString() ? '?' + params : ''}`;
+    const d = await (await fetch(url)).json();
     if (!d.success) throw new Error(d.error);
-    log(`\u2713 Simulation complete \u2014 ${d.comparison?.length} tariff(s)`, 'ok');
+    const src = d.data_source ? ` \u00b7 ${d.data_source.replace(/_/g,' ')}` : '';
+    log(`\u2713 Simulation complete \u2014 ${d.comparison?.length} tariff(s)${src}`, 'ok');
     renderComparison(d);
     showResultMeta(d);
+    _lastResultsSavedAt = d.saved_at || new Date().toISOString();
+    _checkStaleResults(null); // clear the banner after a fresh run
   } catch(e) {
     log(`\u2717 Simulate failed: ${e.message}`, 'err');
   } finally {
@@ -484,9 +522,12 @@ async function runFull() {
   setBusy('btn-run', 'Running\u2026');
   try {
     const d = await post('/run', range);
-    log(`\u2713 Pipeline complete \u2014 ${d.comparison?.length} tariff(s)`, 'ok');
+    const src = d.data_source ? ` \u00b7 ${d.data_source.replace(/_/g,' ')}` : '';
+    log(`\u2713 Pipeline complete \u2014 ${d.comparison?.length} tariff(s)${src}`, 'ok');
     renderComparison(d);
     showResultMeta(d);
+    _lastResultsSavedAt = d.saved_at || new Date().toISOString();
+    _checkStaleResults(null); // clear the banner after a fresh run
   } catch(e) {
     log(`\u2717 Pipeline failed: ${e.message}`, 'err');
   } finally {
@@ -533,7 +574,16 @@ function renderComparison(data) {
     </tr>`;
   }).join('');
 
-  document.getElementById('compare-content').innerHTML = `
+  const dsLabel = {
+    octopus_api:             { cls: 'octopus',  icon: '📡', text: 'Consumption data: Octopus API' },
+    solar_assistant:         { cls: 'sa',       icon: '☀️', text: 'Consumption data: Solar Assistant' },
+    solar_assistant_fallback:{ cls: 'fallback', icon: '⚠️', text: 'Consumption data: Solar Assistant (Octopus fetch failed — using fallback)' },
+  }[data.data_source];
+  const dsBadge = dsLabel
+    ? `<div class="data-source-badge ${dsLabel.cls}">${dsLabel.icon} ${dsLabel.text}</div>`
+    : '';
+
+  document.getElementById('compare-content').innerHTML = dsBadge + `
     <div class="summary-grid" style="margin-bottom:20px">
       <div class="metric">
         <div class="label">Period</div>
@@ -573,7 +623,11 @@ async function loadDetail() {
     '<span style="color:var(--muted)">Loading\u2026</span>';
 
   try {
-    const d = await (await fetch(`${API}/results/${view}?tariff=${tariff}`)).json();
+    const range  = getDateRange();
+    const params = new URLSearchParams({ tariff });
+    if (range.date_from) params.set('date_from', range.date_from);
+    if (range.date_to)   params.set('date_to',   range.date_to);
+    const d = await (await fetch(`${API}/results/${view}?${params}`)).json();
     if (!d.success) throw new Error(d.error);
     const records = d[view];
     if (!records?.length) {
