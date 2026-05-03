@@ -48,9 +48,9 @@ _OCTO_CACHE_PATH = os.environ.get(
 
 def _save_octo_tariffs():
     """Persist all in-memory Octopus tariffs to disk as JSON."""
-    from app.tariffs import OctopusFlatTariff, OctopusTimeOfUseTariff
+    from app.tariffs import OctopusFlatTariff, OctopusDayNightTariff, OctopusTimeOfUseTariff
     octo = [t.to_dict() for t in _tariffs
-            if isinstance(t, (OctopusFlatTariff, OctopusTimeOfUseTariff))]
+            if isinstance(t, (OctopusFlatTariff, OctopusDayNightTariff, OctopusTimeOfUseTariff))]
     try:
         cache_dir = os.path.dirname(_OCTO_CACHE_PATH)
         if cache_dir:
@@ -78,7 +78,6 @@ def _load_octo_tariffs() -> list:
         try:
             ttype = entry.get('type')
             if ttype == 'octopus_flat':
-                # Reconstruct a minimal cfg dict OctopusFlatTariff expects
                 cfg = {
                     'id':             entry['id'],
                     'name':           entry['name'],
@@ -90,6 +89,22 @@ def _load_octo_tariffs() -> list:
                     'gsp_region':     entry.get('gsp_region', ''),
                 }
                 loaded.append(OctopusFlatTariff(cfg))
+            elif ttype == 'octopus_day_night':
+                from app.tariffs import OctopusDayNightTariff
+                cfg = {
+                    'id':             entry['id'],
+                    'name':           entry['name'],
+                    'standing_charge': entry.get('standing_charge', 0),
+                    'export_rate':    entry.get('export_rate', 0),
+                    'day_rate':       entry.get('day_rate', 0),
+                    'night_rate':     entry.get('night_rate', 0),
+                    'night_start':    entry.get('night_start', '00:00'),
+                    'night_end':      entry.get('night_end',   '07:00'),
+                    'product_code':   entry.get('product_code', ''),
+                    'tariff_code':    entry.get('tariff_code', ''),
+                    'gsp_region':     entry.get('gsp_region', ''),
+                }
+                loaded.append(OctopusDayNightTariff(cfg))
             elif ttype == 'octopus_agile':
                 # For time-of-use tariffs we need the raw rates — stored in
                 # the octopus_client cache, so re-fetch from there
@@ -249,10 +264,10 @@ def get_config():
 
         # Append any in-memory Octopus tariffs so the UI can restore them
         # after a page navigation (they are not written to settings.yaml)
-        from app.tariffs import OctopusFlatTariff, OctopusTimeOfUseTariff
+        from app.tariffs import OctopusFlatTariff, OctopusDayNightTariff, OctopusTimeOfUseTariff
         octo_tariffs = [
             t.to_dict() for t in _tariffs
-            if isinstance(t, (OctopusFlatTariff, OctopusTimeOfUseTariff))
+            if isinstance(t, (OctopusFlatTariff, OctopusDayNightTariff, OctopusTimeOfUseTariff))
         ]
         if octo_tariffs:
             raw.setdefault('octopus_tariffs', octo_tariffs)
@@ -739,6 +754,130 @@ def octopus_tariff_codes(product_code):
         log.exception("octopus_tariff_codes failed for %s", product_code)
         return jsonify({"success": False, "error": str(e)}), 500
 
+def _parse_day_night_slots(rates: list) -> dict | None:
+    """
+    Parse day/night rates from standard-unit-rates slots (Go/Cosy style).
+
+    Groups slots by local-time window, then splits into night/day using a
+    rate midpoint. DST boundary fragments (short windows at midnight) are
+    handled by picking the dominant (most frequent) window per rate group.
+    """
+    from collections import defaultdict
+    import zoneinfo
+    from datetime import datetime as _dt
+
+    if not rates:
+        return None
+
+    dd_rates = [r for r in rates if r.get('payment_method', 'DIRECT_DEBIT') == 'DIRECT_DEBIT']
+    if not dd_rates:
+        dd_rates = rates
+
+    try:
+        local_tz = zoneinfo.ZoneInfo(_tz())
+    except Exception:
+        local_tz = timezone.utc
+
+    window_current_rate = {}
+    window_slots        = defaultdict(list)
+
+    for r in dd_rates:
+        vf   = r.get('valid_from', '')
+        vt   = r.get('valid_to',   '')
+        rate = r.get('value_inc_vat')
+        if not vf or not vt or rate is None:
+            continue
+        try:
+            local_from = _dt.fromisoformat(vf.replace('Z', '+00:00')).astimezone(local_tz)
+            local_to   = _dt.fromisoformat(vt.replace('Z', '+00:00')).astimezone(local_tz)
+            window     = (local_from.strftime('%H:%M'), local_to.strftime('%H:%M'))
+            window_slots[window].append(float(rate))
+            if window not in window_current_rate:
+                window_current_rate[window] = float(rate)
+        except (ValueError, KeyError):
+            continue
+
+    log.info("_parse_day_night_slots: windows=%s",
+             {k: round(v, 4) for k, v in window_current_rate.items()})
+
+    if len(window_current_rate) < 2:
+        log.info("_parse_day_night_slots: rejected — fewer than 2 windows")
+        return None
+
+    all_rates = list(window_current_rate.values())
+    midpoint  = (min(all_rates) + max(all_rates)) / 2
+    night_wins = {w: r for w, r in window_current_rate.items() if r < midpoint}
+    day_wins   = {w: r for w, r in window_current_rate.items() if r >= midpoint}
+
+    if not night_wins or not day_wins:
+        log.info("_parse_day_night_slots: rejected — could not split into 2 rate groups")
+        return None
+
+    def _dominant(wins):
+        return max(wins.keys(), key=lambda w: len(window_slots[w]))
+
+    night_window = _dominant(night_wins)
+    day_window   = _dominant(day_wins)
+    night_start, night_end = night_window
+    night_rate = window_current_rate[night_window]
+    day_rate   = window_current_rate[day_window]
+
+    log.info("_parse_day_night_slots: night=%s@%.4f day=%s@%.4f",
+             night_window, night_rate, day_window, day_rate)
+
+    return {
+        'night_rate':  round(night_rate, 4),
+        'day_rate':    round(day_rate,   4),
+        'night_start': night_start,
+        'night_end':   night_end,
+    }
+
+def _parse_dual_register_rates(day_rates: list, night_rates: list) -> dict | None:
+    """
+    Build day/night dict from Economy 7 style dual-register endpoint responses.
+
+    The /day-unit-rates/ and /night-unit-rates/ endpoints return slots with
+    valid_from/valid_to as full UTC datetimes (not just time-of-day), so we
+    extract the time component from the most recent slot in each list.
+    """
+    if not day_rates or not night_rates:
+        return None
+
+    def _avg_rate(slots):
+        dd = [r for r in slots if r.get('payment_method', 'DIRECT_DEBIT') == 'DIRECT_DEBIT']
+        src = dd if dd else slots
+        vals = [float(r['value_inc_vat']) for r in src if r.get('value_inc_vat') is not None]
+        return sum(vals) / len(vals) if vals else None
+
+    def _time_of(iso_str):
+        """Extract HH:MM from an ISO datetime string."""
+        if not iso_str:
+            return None
+        return iso_str[11:16]
+
+    avg_day   = _avg_rate(day_rates)
+    avg_night = _avg_rate(night_rates)
+    if avg_day is None or avg_night is None:
+        return None
+
+    # Use the most recent night slot's valid_from/valid_to for the window
+    # Sort by valid_from descending to get the current/most recent slot
+    sorted_night = sorted(
+        [r for r in night_rates if r.get('valid_from')],
+        key=lambda r: r['valid_from'],
+        reverse=True
+    )
+    n0 = sorted_night[0] if sorted_night else night_rates[0]
+
+    night_start = _time_of(n0.get('valid_from')) or '00:00'
+    night_end   = _time_of(n0.get('valid_to'))   or '07:00'
+
+    return {
+        'day_rate':    round(avg_day,   4),
+        'night_rate':  round(avg_night, 4),
+        'night_start': night_start,
+        'night_end':   night_end,
+    }
 
 @app.post("/api/octopus/import-tariff")
 def octopus_import_tariff():
@@ -815,45 +954,91 @@ def octopus_import_tariff():
             standing.sort(key=lambda x: x.get("valid_from", ""), reverse=True)
             standing_charge_p = float(standing[0].get("value_inc_vat", 0.0))
 
-        # Determine tariff type: if there's only one rate entry it's effectively flat
-        unique_rates = set(r.get("value_inc_vat") for r in rates)
-        is_flat = len(unique_rates) <= 2   # 1 or 2 rates = flat or day-rate, not Agile
-
         # Build a display name from the product detail
         try:
             detail_name = _octo.get_product_detail(product_code).get("display_name", product_code)
         except Exception:
             detail_name = product_code
 
-        tariff_id = _slugify(f"octo_{product_code}_{gsp_region}")
+        tariff_id   = _slugify(f"octo_{product_code}_{gsp_region}")
+        tariff_name = f"{detail_name} ({_GSP_REGION_LABELS.get(gsp_region, gsp_region)})"
 
-        if is_flat:
-            from app.tariffs import OctopusFlatTariff
-            avg_rate = sum(unique_rates) / len(unique_rates)
+        # Classify tariff type using tariff code structure, then API data
+        from app.octopus_client import classify_tariff
+        tc_type   = classify_tariff(tariff_code)
+        day_night = None
+
+        unique_rate_values = set(r.get("value_inc_vat") for r in rates)
+        log.info("Tariff classification: code=%s tc_type=%s total_slots=%d unique_rates=%d values=%s",
+                 tariff_code, tc_type, len(rates), len(unique_rate_values),
+                 sorted(unique_rate_values)[:5])
+
+        if tc_type == 'dual_register':
+            day_r     = _octo.get_tariff_day_rates(  product_code, tariff_code, date_from, date_to)
+            night_r   = _octo.get_tariff_night_rates(product_code, tariff_code, date_from, date_to)
+            log.info("Dual-register: day_slots=%d night_slots=%d", len(day_r), len(night_r))
+            day_night = _parse_dual_register_rates(day_r, night_r)
+        elif tc_type == 'single_register':
+            # Sample first 4 slots so we can see valid_from/valid_to in logs
+            for s in rates[:4]:
+                log.info("  slot: rate=%.4f from=%s to=%s payment=%s",
+                         s.get('value_inc_vat', 0),
+                         s.get('valid_from', '?')[:19],
+                         s.get('valid_to',   '?')[:19],
+                         s.get('payment_method', 'none'))
+            day_night = _parse_day_night_slots(rates)
+            log.info("_parse_day_night_slots result: %s", day_night)
+        elif tc_type == 'agile':
+            pass
+
+        log.info("Final day_night=%s → will build type=%s",
+                 day_night,
+                 'octopus_day_night' if day_night else ('octopus_agile' if tc_type == 'agile' else 'octopus_flat/tou'))
+
+        # Build tariff object
+        if day_night:
+            from app.tariffs import OctopusDayNightTariff
             tariff_cfg = {
-                "id":             tariff_id,
-                "name":           f"{detail_name} ({_GSP_REGION_LABELS.get(gsp_region, gsp_region)})",
+                "id":              tariff_id,
+                "name":            tariff_name,
                 "standing_charge": standing_charge_p,
-                "export_rate":    0.0,
-                "import_rate":    avg_rate,
-                "product_code":   product_code,
-                "tariff_code":    tariff_code,
-                "gsp_region":     gsp_region,
+                "export_rate":     0.0,
+                "day_rate":        day_night["day_rate"],
+                "night_rate":      day_night["night_rate"],
+                "night_start":     day_night["night_start"],
+                "night_end":       day_night["night_end"],
+                "product_code":    product_code,
+                "tariff_code":     tariff_code,
+                "gsp_region":      gsp_region,
             }
-            new_tariff = OctopusFlatTariff(tariff_cfg)
-        else:
+            new_tariff = OctopusDayNightTariff(tariff_cfg)
+        elif tc_type == 'agile' or len(set(r.get("value_inc_vat") for r in rates)) > 1:
             from app.tariffs import OctopusTimeOfUseTariff
             tariff_cfg = {
-                "id":             tariff_id,
-                "name":           f"{detail_name} ({_GSP_REGION_LABELS.get(gsp_region, gsp_region)})",
+                "id":              tariff_id,
+                "name":            tariff_name,
                 "standing_charge": standing_charge_p,
-                "export_rate":    0.0,
-                "rates":          rates,
-                "product_code":   product_code,
-                "tariff_code":    tariff_code,
-                "gsp_region":     gsp_region,
+                "export_rate":     0.0,
+                "rates":           rates,
+                "product_code":    product_code,
+                "tariff_code":     tariff_code,
+                "gsp_region":      gsp_region,
             }
             new_tariff = OctopusTimeOfUseTariff(tariff_cfg)
+        else:
+            from app.tariffs import OctopusFlatTariff
+            unique_rates = set(r.get("value_inc_vat") for r in rates)
+            tariff_cfg = {
+                "id":              tariff_id,
+                "name":            tariff_name,
+                "standing_charge": standing_charge_p,
+                "export_rate":     0.0,
+                "import_rate":     next(iter(unique_rates), 0.0),
+                "product_code":    product_code,
+                "tariff_code":     tariff_code,
+                "gsp_region":      gsp_region,
+            }
+            new_tariff = OctopusFlatTariff(tariff_cfg)
 
         # Replace if already loaded (re-import with new dates), otherwise append
         _tariffs = [t for t in _tariffs if t.id != tariff_id]
@@ -866,19 +1051,26 @@ def octopus_import_tariff():
         _save_octo_tariffs()
         _config_changed_at = datetime.now(timezone.utc).isoformat()
 
-        return jsonify({
-            "success":          True,
-            "tariff_id":        tariff_id,
-            "tariff_code":      tariff_code,
-            "product_code":     product_code,
-            "gsp_region":       gsp_region,
-            "rate_slots":       len(rates),
-            "is_agile":         not is_flat,
+        resp = {
+            "success":           True,
+            "tariff_id":         tariff_id,
+            "tariff_code":       tariff_code,
+            "product_code":      product_code,
+            "gsp_region":        gsp_region,
+            "tariff_name":       new_tariff.name,
+            "tariff_type":       new_tariff.to_dict()["type"],
+            "rate_slots":        len(rates),
             "standing_charge_p": standing_charge_p,
-            "date_from":        date_from.date().isoformat(),
-            "date_to":          date_to.date().isoformat(),
-            "tariff_name":      new_tariff.name,   # ← add this line
-        })
+            "date_from":         date_from.date().isoformat(),
+            "date_to":           date_to.date().isoformat(),
+        }
+        if day_night:
+            resp["day_rate_p"]   = day_night["day_rate"]
+            resp["night_rate_p"] = day_night["night_rate"]
+            resp["night_start"]  = day_night["night_start"]
+            resp["night_end"]    = day_night["night_end"]
+        log.info("Import response: %s", resp)
+        return jsonify(resp)
 
     except requests.exceptions.ConnectionError as e:
         return jsonify({"success": False, "error": f"Could not reach Octopus API: {e}"}), 502
@@ -900,6 +1092,48 @@ def octopus_remove_tariff(tariff_id):
     _config_changed_at = datetime.now(timezone.utc).isoformat()
     return jsonify({"success": True, "removed": removed})
 
+@app.patch("/api/octopus/tariff/<tariff_id>")
+def octopus_edit_tariff(tariff_id):
+    """
+    Update rate/window fields on an imported Octopus tariff (user override).
+
+    Accepted JSON fields (all optional — only supplied fields are changed):
+      standing_charge, export_rate,
+      import_rate                        (octopus_flat)
+      day_rate, night_rate, night_start, night_end   (octopus_day_night)
+    """
+    global _tariffs, _config_changed_at
+    from app.tariffs import (OctopusFlatTariff, OctopusDayNightTariff,
+                              OctopusTimeOfUseTariff)
+    body = request.get_json(force=True) or {}
+
+    tariff = next((t for t in _tariffs if t.id == tariff_id), None)
+    if tariff is None:
+        return jsonify({"success": False, "error": f"Tariff not found: {tariff_id}"}), 404
+
+    try:
+        if "standing_charge" in body:
+            tariff.standing_charge = float(body["standing_charge"])
+        if "export_rate" in body:
+            tariff._export_rate = float(body["export_rate"])
+
+        if isinstance(tariff, OctopusFlatTariff):
+            if "import_rate" in body:
+                tariff._import_rate = float(body["import_rate"])
+
+        elif isinstance(tariff, OctopusDayNightTariff):
+            from app.tariffs import _parse_time as _pt
+            if "day_rate"    in body: tariff._day_rate    = float(body["day_rate"])
+            if "night_rate"  in body: tariff._night_rate  = float(body["night_rate"])
+            if "night_start" in body: tariff._night_start = _pt(body["night_start"])
+            if "night_end"   in body: tariff._night_end   = _pt(body["night_end"])
+
+    except (ValueError, TypeError) as e:
+        return jsonify({"success": False, "error": f"Invalid value: {e}"}), 400
+
+    _save_octo_tariffs()
+    _config_changed_at = datetime.now(timezone.utc).isoformat()
+    return jsonify({"success": True, "tariff": tariff.to_dict()})
 
 @app.delete("/api/octopus/cache")
 def octopus_clear_cache():

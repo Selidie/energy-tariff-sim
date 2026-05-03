@@ -188,6 +188,62 @@ def get_tariff_unit_rates(product_code: str,
     _cache_write(cache_key, rates)
     return rates
 
+def get_tariff_day_rates(product_code: str,
+                         tariff_code: str,
+                         period_from: datetime,
+                         period_to: datetime) -> list:
+    """
+    Fetch day-rate slots from /day-unit-rates/.
+    Only populated for dual-register (E-2R-) tariffs such as Economy 7.
+    Returns [] with a 404 for single-register tariffs.
+    """
+    from_str  = period_from.strftime("%Y-%m-%dT%H:%M:%SZ")
+    to_str    = period_to.strftime("%Y-%m-%dT%H:%M:%SZ")
+    cache_key = f"day_rates_{tariff_code}_{from_str}_{to_str}"
+    cached    = _cache_read(cache_key)
+    if cached is not None:
+        return cached
+
+    url    = (f"{_BASE_URL}/products/{product_code}"
+              f"/electricity-tariffs/{tariff_code}/day-unit-rates/")
+    params = {"period_from": from_str, "period_to": to_str, "page_size": _PAGE_SIZE}
+    try:
+        rates = _paginate(url, params)
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 404:
+            return []
+        raise
+    _cache_write(cache_key, rates)
+    return rates
+
+
+def get_tariff_night_rates(product_code: str,
+                           tariff_code: str,
+                           period_from: datetime,
+                           period_to: datetime) -> list:
+    """
+    Fetch night-rate slots from /night-unit-rates/.
+    Only populated for dual-register (E-2R-) tariffs such as Economy 7.
+    Returns [] with a 404 for single-register tariffs.
+    """
+    from_str  = period_from.strftime("%Y-%m-%dT%H:%M:%SZ")
+    to_str    = period_to.strftime("%Y-%m-%dT%H:%M:%SZ")
+    cache_key = f"night_rates_{tariff_code}_{from_str}_{to_str}"
+    cached    = _cache_read(cache_key)
+    if cached is not None:
+        return cached
+
+    url    = (f"{_BASE_URL}/products/{product_code}"
+              f"/electricity-tariffs/{tariff_code}/night-unit-rates/")
+    params = {"period_from": from_str, "period_to": to_str, "page_size": _PAGE_SIZE}
+    try:
+        rates = _paginate(url, params)
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 404:
+            return []
+        raise
+    _cache_write(cache_key, rates)
+    return rates
 
 def get_tariff_standing_charges(product_code: str,
                                 tariff_code: str,
@@ -332,6 +388,36 @@ def parse_tariff_code(tariff_code: str) -> dict:
     if m:
         return {"product_code": m.group(1), "gsp_region": f"_{m.group(2)}"}
     return {"product_code": "", "gsp_region": ""}
+
+def classify_tariff(tariff_code: str) -> str:
+    """
+    Determine tariff type from the tariff code structure alone.
+
+    Returns one of:
+      'dual_register'  — E-2R-... (Economy 7 style, separate day/night endpoints)
+      'single_rate'    — E-1R-... with a fixed single rate (Flexible, Fixed etc.)
+      'go_style'       — E-1R-... where standard-unit-rates returns alternating
+                         cheap/standard windows (Go, Cosy Octopus, Intelligent Go)
+      'agile'          — E-1R-AGILE-... half-hourly variable pricing
+      'unknown'        — cannot determine from code alone
+
+    Note: 'go_style' and 'single_rate' both use E-1R- and cannot be
+    distinguished from the code alone — the caller must inspect the actual
+    rate slots returned (>2 unique time windows = go_style).
+    """
+    if not tariff_code:
+        return 'unknown'
+    tc = tariff_code.upper()
+    # Dual-register Economy 7 style
+    if '-2R-' in tc:
+        return 'dual_register'
+    # Agile — half-hourly
+    if 'AGILE' in tc:
+        return 'agile'
+    # Single-register — Go/Cosy/Intelligent use E-1R- but return windowed slots
+    if '-1R-' in tc:
+        return 'single_register'
+    return 'unknown'
 
 
 def get_consumption(mpan: str,
