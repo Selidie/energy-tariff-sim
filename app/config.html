@@ -118,7 +118,8 @@
   .tariff-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
   .badge-flat       { background: #1e3a5f; color: var(--accent); }
   .badge-day_night  { background: #1a3347; color: #67e8f9; }
-  .badge-octopus    { background: #1a3325; color: #34d399; }
+  .badge-octopus         { background: #1a3325; color: #34d399; }
+  .badge-octopus_day_night { background: #1a2f3a; color: #67e8f9; }
   .badge-baseline   { background: rgba(245,158,11,.15); color: var(--gold); border: 1px solid rgba(245,158,11,.3); }
   .tariff-body { padding: 16px; border-top: 1px solid var(--border); display: none; }
   .tariff-body.open { display: block; }
@@ -409,6 +410,33 @@
   #acct-detected-tariff .dt-hint {
     font-size: 12px; color: var(--muted); margin-bottom: 10px;
   }
+
+  /* Octopus tariff edit modal */
+  #octo-edit-modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.7); backdrop-filter: blur(3px);
+    z-index: 300; align-items: center; justify-content: center;
+  }
+  #octo-edit-modal-overlay.visible { display: flex; }
+  #octo-edit-modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 28px 28px 24px;
+    max-width: 480px; width: calc(100% - 40px);
+    box-shadow: 0 24px 64px rgba(0,0,0,.6);
+  }
+  #octo-edit-modal h3 { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+  #octo-edit-modal .edit-tariff-code {
+    font-family: monospace; font-size: 11px; color: var(--muted); margin-bottom: 18px;
+  }
+  #octo-edit-status { font-size: 12px; min-height: 18px; margin-top: 10px; }
+  #octo-edit-status.ok  { color: var(--accent2); }
+  #octo-edit-status.err { color: var(--danger); }
+  .rate-detail-row {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 14px; margin-bottom: 14px;
+    font-size: 12px; color: var(--muted); display: flex; gap: 20px; flex-wrap: wrap;
+  }
+  .rate-detail-row span strong { color: var(--text); }
 </style>
 </head>
 <body>
@@ -765,6 +793,74 @@
 
 <div id="toast"></div>
 
+<!-- Octopus Tariff Edit Modal -->
+<div id="octo-edit-modal-overlay">
+  <div id="octo-edit-modal">
+    <div style="font-size:28px;margin-bottom:12px">✏️</div>
+    <h3>Edit Octopus Tariff</h3>
+    <div class="edit-tariff-code" id="octo-edit-tariff-code"></div>
+
+    <div id="octo-edit-fields-flat" style="display:none">
+      <div class="row row-2">
+        <div class="field">
+          <label>Import Rate (p/kWh)</label>
+          <input type="number" step="0.0001" min="0" id="octo-edit-import-rate" />
+        </div>
+        <div class="field">
+          <label>Export Rate (p/kWh)</label>
+          <input type="number" step="0.0001" min="0" id="octo-edit-export-rate-flat" />
+        </div>
+      </div>
+      <div class="row row-2">
+        <div class="field">
+          <label>Standing Charge (p/day)</label>
+          <input type="number" step="0.01" min="0" id="octo-edit-standing-flat" />
+        </div>
+      </div>
+    </div>
+
+    <div id="octo-edit-fields-day-night" style="display:none">
+      <div class="row row-2">
+        <div class="field">
+          <label>Day Rate (p/kWh)</label>
+          <input type="number" step="0.0001" min="0" id="octo-edit-day-rate" />
+        </div>
+        <div class="field">
+          <label>Night Rate (p/kWh)</label>
+          <input type="number" step="0.0001" min="0" id="octo-edit-night-rate" />
+        </div>
+      </div>
+      <div class="row row-3">
+        <div class="field">
+          <label>Night Starts</label>
+          <input type="time" id="octo-edit-night-start" />
+        </div>
+        <div class="field">
+          <label>Night Ends</label>
+          <input type="time" id="octo-edit-night-end" />
+        </div>
+        <div class="field">
+          <label>Export Rate (p/kWh)</label>
+          <input type="number" step="0.0001" min="0" id="octo-edit-export-rate-dn" />
+        </div>
+      </div>
+      <div class="row row-2">
+        <div class="field">
+          <label>Standing Charge (p/day)</label>
+          <input type="number" step="0.01" min="0" id="octo-edit-standing-dn" />
+        </div>
+      </div>
+    </div>
+
+    <div id="octo-edit-status"></div>
+
+    <div class="modal-actions" style="margin-top:20px">
+      <button class="btn-secondary" onclick="closeOctoEditModal()">Cancel</button>
+      <button class="btn-primary" id="octo-edit-save-btn" onclick="saveOctoTariffEdit()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let _tariffs     = [];
 let _baselineId  = '';
@@ -803,19 +899,7 @@ async function loadConfig() {
     // Restore any in-memory Octopus tariffs returned alongside the config
     (cfg?.octopus_tariffs || []).forEach(t => {
       if (!_tariffs.find(x => x.id === t.id)) {
-        _tariffs.push({
-          id:              t.id,
-          name:            t.name,
-          type:            t.type,        // 'octopus_flat' or 'octopus_agile'
-          standing_charge: String(t.standing_charge_p ?? t.standing_charge ?? '0'),
-          export_rate:     String(t.export_rate ?? '0'),
-          import_rate:     String(t.import_rate ?? ''),
-          slot_count:      t.slot_count ?? null,
-          product_code:    t.product_code ?? '',
-          tariff_code:     t.tariff_code ?? '',
-          gsp_region:      t.gsp_region ?? '',
-          _open:           false,
-        });
+        _tariffs.push(_normOctoStored(t));
       }
     });
 
@@ -892,13 +976,15 @@ function renderTariffs() {
   _tariffs.forEach((t, i) => {
     const tid        = t.id || slugify(t.name);
     const isBaseline = tid === _baselineId;
-    const isOcto     = t.type === 'octopus_flat' || t.type === 'octopus_agile';
-    const typeLabel  = t.type === 'flat'          ? 'Flat Rate'
-                     : t.type === 'day_night'     ? 'Economy 7'
-                     : t.type === 'octopus_agile' ? 'Octopus Agile'
+    const isOcto     = t.type === 'octopus_flat' || t.type === 'octopus_agile' || t.type === 'octopus_day_night';
+    const typeLabel  = t.type === 'flat'               ? 'Flat Rate'
+                     : t.type === 'day_night'          ? 'Economy 7'
+                     : t.type === 'octopus_agile'      ? 'Octopus Agile'
+                     : t.type === 'octopus_day_night'  ? 'Octopus Day/Night'
                      : 'Octopus';
-    const badgeClass = t.type === 'flat'      ? 'badge-flat'
-                     : t.type === 'day_night' ? 'badge-day_night'
+    const badgeClass = t.type === 'flat'               ? 'badge-flat'
+                     : t.type === 'day_night'          ? 'badge-day_night'
+                     : t.type === 'octopus_day_night'  ? 'badge-octopus_day_night'
                      : 'badge-octopus';
 
     const card = document.createElement('div');
@@ -909,31 +995,35 @@ function renderTariffs() {
       ? `<span style="font-size:12px;color:var(--gold)">&#9733; This is your current tariff &mdash; used as the comparison baseline</span>`
       : `<button class="btn-gold btn-sm" onclick="setBaseline(${i})">&#9733; Set as Current Tariff</button>`;
 
+    const octoRateDetail = t.type === 'octopus_day_night'
+      ? `<div class="rate-detail-row">
+           <span>Day rate: <strong>${escHtml(t.day_rate??'?')}p/kWh</strong></span>
+           <span>Night rate: <strong>${escHtml(t.night_rate??'?')}p/kWh</strong></span>
+           <span>Night window: <strong>${escHtml(t.night_start||'?')} – ${escHtml(t.night_end||'?')}</strong></span>
+           <span>Standing charge: <strong>${escHtml(t.standing_charge??'?')}p/day</strong></span>
+         </div>`
+      : t.type === 'octopus_flat'
+      ? `<div class="rate-detail-row">
+           <span>Import rate: <strong>${escHtml(t.import_rate??'?')}p/kWh</strong></span>
+           <span>Standing charge: <strong>${escHtml(t.standing_charge??'?')}p/day</strong></span>
+         </div>`
+      : `<div class="rate-detail-row">
+           <span>Variable/Agile rate: <strong>${t.slot_count||'?'} half-hour slots</strong></span>
+           <span>Standing charge: <strong>${escHtml(t.standing_charge??'?')}p/day</strong></span>
+         </div>`;
+
     const bodyHtml = isOcto
       ? `<div class="tariff-body ${t._open ? 'open' : ''}">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">
-            Fetched from the Octopus Energy API &mdash; rates are read-only.
-            <br>Product: <code style="color:var(--text)">${escHtml(t.product_code||'')}</code>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6">
+            Product: <code style="color:var(--text)">${escHtml(t.product_code||'')}</code>
             &nbsp;&nbsp;Tariff: <code style="color:var(--text)">${escHtml(t.tariff_code||'')}</code>
             &nbsp;&nbsp;Region: <code style="color:var(--text)">${escHtml(t.gsp_region||'')}</code>
           </div>
-          <div class="row row-3">
-            <div class="field">
-              <label>Standing Charge (p/day)</label>
-              <input type="number" disabled value="${escHtml(t.standing_charge??'')}" style="opacity:.6" />
-            </div>
-            <div class="field">
-              <label>${t.type==='octopus_agile' ? 'Rate Slots' : 'Import Rate (p/kWh)'}</label>
-              <input type="text" disabled value="${t.type==='octopus_agile' ? (t.slot_count||'?')+' half-hour slots' : escHtml(t.import_rate??'')}" style="opacity:.6" />
-            </div>
-            <div class="field">
-              <label>Export Rate (p/kWh)</label>
-              <input type="number" disabled value="${escHtml(t.export_rate??'0')}" style="opacity:.6" />
-            </div>
-          </div>
+          ${octoRateDetail}
           <div class="tariff-actions">
             ${actionsHtml}
             <span class="spacer"></span>
+            ${t.type !== 'octopus_agile' ? `<button class="btn-ghost btn-sm" onclick="openOctoEditModal(${i})">&#9998; Edit Rates</button>` : ''}
             <button class="btn-danger btn-sm" onclick="removeTariff(${i})">Remove</button>
           </div>
         </div>`
@@ -1063,7 +1153,7 @@ function addTariff(type) {
 async function removeTariff(i) {
   const t = _tariffs[i];
   const removedId = t.id || slugify(t.name);
-  const isOcto = t.type === 'octopus_flat' || t.type === 'octopus_agile';
+  const isOcto = t.type === 'octopus_flat' || t.type === 'octopus_agile' || t.type === 'octopus_day_night';
 
   // For Octopus tariffs, call the backend DELETE endpoint so the tariff is
   // removed from octopus_tariffs.json and won't be re-imported on next pipeline run.
@@ -1186,7 +1276,7 @@ async function saveConfig() {
       export_mpan:    document.getElementById('acct-export-mpan').value.trim(),
       export_serial:  document.getElementById('acct-export-serial').value.trim(),
     },
-    tariffs: _tariffs.filter(t => t.type !== 'octopus_flat' && t.type !== 'octopus_agile').map(t => {
+    tariffs: _tariffs.filter(t => t.type !== 'octopus_flat' && t.type !== 'octopus_agile' && t.type !== 'octopus_day_night').map(t => {
       const base = {
         id:              t.id || slugify(t.name),
         name:            t.name,
@@ -1517,6 +1607,169 @@ function saFmtDate(iso) {
   const d = new Date(iso);
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
+
+// ── Octopus tariff normalisation helpers ───────────────────────────────────
+
+// Normalise an import-tariff API response into a _tariffs entry
+function _normOctoResponse(d) {
+  const type = d.tariff_type || (d.is_agile ? 'octopus_agile' : 'octopus_flat');
+  const base = {
+    id:             d.tariff_id,
+    name:           d.tariff_name || d.tariff_id,
+    type,
+    standing_charge: String(d.standing_charge_p ?? '0'),
+    export_rate:    '0',
+    slot_count:     d.rate_slots ?? null,
+    product_code:   d.product_code ?? '',
+    tariff_code:    d.tariff_code  ?? '',
+    gsp_region:     d.gsp_region   ?? '',
+    _open:          false,
+  };
+  if (type === 'octopus_day_night') {
+    base.day_rate    = String(d.day_rate_p   ?? '');
+    base.night_rate  = String(d.night_rate_p ?? '');
+    base.night_start = d.night_start ?? '00:00';
+    base.night_end   = d.night_end   ?? '07:00';
+  } else {
+    base.import_rate = '';
+  }
+  return base;
+}
+
+// Normalise a stored octopus_tariffs.json entry (from /api/config) into a _tariffs entry
+function _normOctoStored(t) {
+  const base = {
+    id:              t.id,
+    name:            t.name,
+    type:            t.type,
+    standing_charge: String(t.standing_charge ?? '0'),
+    export_rate:     String(t.export_rate ?? '0'),
+    slot_count:      t.slot_count ?? null,
+    product_code:    t.product_code ?? '',
+    tariff_code:     t.tariff_code  ?? '',
+    gsp_region:      t.gsp_region   ?? '',
+    _open:           false,
+  };
+  if (t.type === 'octopus_day_night') {
+    base.day_rate    = String(t.day_rate   ?? '');
+    base.night_rate  = String(t.night_rate ?? '');
+    base.night_start = t.night_start ?? '00:00';
+    base.night_end   = t.night_end   ?? '07:00';
+  } else {
+    base.import_rate = String(t.import_rate ?? '');
+  }
+  return base;
+}
+
+// ── Octopus tariff edit modal ──────────────────────────────────────────────
+
+let _octoEditIdx = null;
+
+function openOctoEditModal(i) {
+  const t = _tariffs[i];
+  _octoEditIdx = i;
+
+  document.getElementById('octo-edit-tariff-code').textContent =
+    `${t.tariff_code || t.product_code} — ${t.gsp_region}`;
+  document.getElementById('octo-edit-status').textContent = '';
+  document.getElementById('octo-edit-status').className   = '';
+
+  const flatFields = document.getElementById('octo-edit-fields-flat');
+  const dnFields   = document.getElementById('octo-edit-fields-day-night');
+
+  if (t.type === 'octopus_day_night') {
+    flatFields.style.display = 'none';
+    dnFields.style.display   = '';
+    document.getElementById('octo-edit-day-rate').value    = t.day_rate    ?? '';
+    document.getElementById('octo-edit-night-rate').value  = t.night_rate  ?? '';
+    document.getElementById('octo-edit-night-start').value = t.night_start ?? '00:00';
+    document.getElementById('octo-edit-night-end').value   = t.night_end   ?? '07:00';
+    document.getElementById('octo-edit-export-rate-dn').value = t.export_rate ?? '0';
+    document.getElementById('octo-edit-standing-dn').value    = t.standing_charge ?? '0';
+  } else {
+    dnFields.style.display   = 'none';
+    flatFields.style.display = '';
+    document.getElementById('octo-edit-import-rate').value       = t.import_rate    ?? '';
+    document.getElementById('octo-edit-export-rate-flat').value  = t.export_rate    ?? '0';
+    document.getElementById('octo-edit-standing-flat').value     = t.standing_charge ?? '0';
+  }
+
+  document.getElementById('octo-edit-modal-overlay').classList.add('visible');
+}
+
+function closeOctoEditModal() {
+  document.getElementById('octo-edit-modal-overlay').classList.remove('visible');
+  _octoEditIdx = null;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('octo-edit-modal-overlay')?.addEventListener('click', function(e) {
+    if (e.target === this) closeOctoEditModal();
+  });
+});
+
+async function saveOctoTariffEdit() {
+  if (_octoEditIdx === null) return;
+  const t      = _tariffs[_octoEditIdx];
+  const btn    = document.getElementById('octo-edit-save-btn');
+  const status = document.getElementById('octo-edit-status');
+
+  btn.disabled = true;
+  status.textContent = '';
+  status.className   = '';
+
+  let fields = {};
+  if (t.type === 'octopus_day_night') {
+    fields = {
+      day_rate:       parseFloat(document.getElementById('octo-edit-day-rate').value),
+      night_rate:     parseFloat(document.getElementById('octo-edit-night-rate').value),
+      night_start:    document.getElementById('octo-edit-night-start').value,
+      night_end:      document.getElementById('octo-edit-night-end').value,
+      export_rate:    parseFloat(document.getElementById('octo-edit-export-rate-dn').value),
+      standing_charge: parseFloat(document.getElementById('octo-edit-standing-dn').value),
+    };
+  } else {
+    fields = {
+      import_rate:    parseFloat(document.getElementById('octo-edit-import-rate').value),
+      export_rate:    parseFloat(document.getElementById('octo-edit-export-rate-flat').value),
+      standing_charge: parseFloat(document.getElementById('octo-edit-standing-flat').value),
+    };
+  }
+
+  try {
+    const r = await fetch(`/api/octopus/tariff/${encodeURIComponent(t.id)}`, {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(fields),
+    });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error);
+
+    // Update local state from the server's confirmed response
+    const updated = d.tariff;
+    if (t.type === 'octopus_day_night') {
+      _tariffs[_octoEditIdx].day_rate       = String(updated.day_rate    ?? fields.day_rate);
+      _tariffs[_octoEditIdx].night_rate     = String(updated.night_rate  ?? fields.night_rate);
+      _tariffs[_octoEditIdx].night_start    = updated.night_start ?? fields.night_start;
+      _tariffs[_octoEditIdx].night_end      = updated.night_end   ?? fields.night_end;
+      _tariffs[_octoEditIdx].export_rate    = String(updated.export_rate     ?? fields.export_rate);
+      _tariffs[_octoEditIdx].standing_charge = String(updated.standing_charge ?? fields.standing_charge);
+    } else {
+      _tariffs[_octoEditIdx].import_rate    = String(updated.import_rate    ?? fields.import_rate);
+      _tariffs[_octoEditIdx].export_rate    = String(updated.export_rate    ?? fields.export_rate);
+      _tariffs[_octoEditIdx].standing_charge = String(updated.standing_charge ?? fields.standing_charge);
+    }
+
+    renderTariffs();
+    toast('Tariff rates updated ✓', 'ok');
+    closeOctoEditModal();
+  } catch(e) {
+    status.textContent = '✗ ' + e.message;
+    status.className   = 'err';
+    btn.disabled = false;
+  }
+}
+
 // ── Octopus Import Modal ───────────────────────────────────────────────────
 
 let _octoProducts   = [];
@@ -1637,19 +1890,7 @@ async function doOctoImport() {
 
       // Add to local _tariffs so it appears in the list without a page reload
       _tariffs = _tariffs.filter(t => t.id !== d.tariff_id);
-      _tariffs.push({
-        id:             d.tariff_id,
-        name:           p.display_name || p.code,
-        type:           d.is_agile ? 'octopus_agile' : 'octopus_flat',
-        standing_charge: String(d.standing_charge_p ?? '0'),
-        export_rate:    '0',
-        import_rate:    d.is_agile ? '' : '',
-        slot_count:     d.rate_slots ?? null,
-        product_code:   d.product_code,
-        tariff_code:    d.tariff_code,
-        gsp_region:     d.gsp_region,
-        _open:          false,
-      });
+      _tariffs.push(_normOctoResponse(d));
       imported++;
     } catch(e) {
       failed++;
@@ -1843,26 +2084,13 @@ async function acctImportDetectedTariff() {
 
     // Add to tariff list
     _tariffs = _tariffs.filter(t => t.id !== d.tariff_id);
-    _tariffs.push({
-      id:             d.tariff_id,
-      name:           d.tariff_name,
-      type:           d.is_agile ? 'octopus_agile' : 'octopus_flat',
-      standing_charge: String(d.standing_charge_p ?? '0'),
-      export_rate:    '0',
-      import_rate:    '',
-      slot_count:     d.rate_slots ?? null,
-      product_code:   d.product_code,
-      tariff_code:    d.tariff_code,
-      gsp_region:     d.gsp_region,
-      _open:          false,
-    });
+    _tariffs.push(_normOctoResponse(d));
 
     renderTariffs();
     document.getElementById('acct-detected-tariff').style.display = 'none';
     statusEl.textContent = `✓ Tariff ${_acctDetectedTariff.tariff_code} imported and added to simulation`;
     statusEl.className   = 'ok';
     toast('Tariff imported ✓', 'ok');
-    await loadConfig();
 
   } catch(e) {
     statusEl.textContent = '✗ Import failed: ' + e.message;
