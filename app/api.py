@@ -233,6 +233,19 @@ def config_page():
     return send_file(_CONFIG_PATH)
 
 
+# ── Static assets ──────────────────────────────────────────────────────────
+
+_ICON_PATH = os.path.join(os.path.dirname(__file__), 'icon.png')
+
+@app.get('/favicon.ico')
+def favicon():
+    return send_file(_ICON_PATH, mimetype='image/png')
+
+@app.get('/static/icon.png')
+def static_icon():
+    return send_file(_ICON_PATH, mimetype='image/png')
+
+
 # ── Health ─────────────────────────────────────────────────────────────────
 
 @app.get('/health')
