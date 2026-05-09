@@ -34,7 +34,8 @@ def simulate_tariff(agg_df: pd.DataFrame, tariff, tz: str = 'UTC') -> pd.DataFra
     df['net_cost_p']  = df['import_cost_p'] - df['export_credit_p'] + df['standing_p']
 
     # ── Day / night split columns (populated for DayNightTariff; zero for flat) ──
-    if isinstance(tariff, DayNightTariff):
+    from app.tariffs import OctopusDayNightTariff as _OctoDayNight
+    if isinstance(tariff, (DayNightTariff, _OctoDayNight)):
         is_night = pd.Series(
             [tariff._in_night_period(dt) for dt in df.index], index=df.index
         )
@@ -120,7 +121,7 @@ def total_summary(detail_df: pd.DataFrame, tariff) -> dict:
         'day_import_cost_p':       round(detail_df['day_import_cost_p'].sum(), 2),
         'night_import_cost_p':     round(detail_df['night_import_cost_p'].sum(), 2),
     }
-    from app.tariffs import OctopusFlatTariff, OctopusTimeOfUseTariff
+    from app.tariffs import OctopusFlatTariff, OctopusDayNightTariff, OctopusTimeOfUseTariff
 
     if is_day_night:
         summary['day_rate_p']        = tariff._day_rate
@@ -131,6 +132,16 @@ def total_summary(detail_df: pd.DataFrame, tariff) -> dict:
         summary['standing_charge_p'] = tariff.standing_charge
     elif isinstance(tariff, OctopusFlatTariff):
         summary['flat_rate_p']       = tariff._import_rate
+        summary['export_rate_p']     = tariff._export_rate
+        summary['standing_charge_p'] = tariff.standing_charge
+        summary['product_code']      = tariff.product_code
+        summary['tariff_code']       = tariff.tariff_code
+        summary['gsp_region']        = tariff.gsp_region
+    elif isinstance(tariff, OctopusDayNightTariff):
+        summary['day_rate_p']        = tariff._day_rate
+        summary['night_rate_p']      = tariff._night_rate
+        summary['night_start']       = tariff._night_start.strftime('%H:%M')
+        summary['night_end']         = tariff._night_end.strftime('%H:%M')
         summary['export_rate_p']     = tariff._export_rate
         summary['standing_charge_p'] = tariff.standing_charge
         summary['product_code']      = tariff.product_code

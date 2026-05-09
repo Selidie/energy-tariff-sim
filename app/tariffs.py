@@ -73,6 +73,7 @@ class DayNightTariff(BaseTariff):
             return self._night_rate
         return self._day_rate
 
+
 # ---------------------------------------------------------------------------
 # Octopus flat tariff  (single static rate fetched from Octopus API)
 # ---------------------------------------------------------------------------
@@ -176,6 +177,48 @@ class OctopusTimeOfUseTariff(BaseTariff):
         })
         return d
 
+# ---------------------------------------------------------------------------
+# Octopus day/night tariff  (two-rate, time-windowed, from Octopus API)
+# ---------------------------------------------------------------------------
+class OctopusDayNightTariff(BaseTariff):
+    """
+    A two-rate Octopus tariff (e.g. Go, Cosy, Economy 7) where the import
+    rate differs between a cheap night window and a standard day rate.
+    Constructed from rate slots returned by the Octopus API.
+    """
+    def __init__(self, cfg: dict):
+        super().__init__(cfg)
+        self._day_rate    = float(cfg['day_rate'])
+        self._night_rate  = float(cfg['night_rate'])
+        self._night_start = _parse_time(cfg['night_start'])   # e.g. "00:30"
+        self._night_end   = _parse_time(cfg['night_end'])     # e.g. "07:30"
+        self.product_code = cfg.get('product_code', '')
+        self.tariff_code  = cfg.get('tariff_code', '')
+        self.gsp_region   = cfg.get('gsp_region', '')
+
+    def _in_night_period(self, dt) -> bool:
+        t = dt.time() if hasattr(dt, 'time') else dt
+        return _in_night(t, self._night_start, self._night_end)
+
+    def import_rate(self, dt) -> float:
+        return self._night_rate if self._in_night_period(dt) else self._day_rate
+
+    def to_dict(self) -> dict:
+        d = super().to_dict()
+        d.update({
+            'type':            'octopus_day_night',
+            'day_rate':        self._day_rate,
+            'night_rate':      self._night_rate,
+            'night_start':     self._night_start.strftime('%H:%M'),
+            'night_end':       self._night_end.strftime('%H:%M'),
+            'standing_charge': self.standing_charge,
+            'export_rate':     self._export_rate,
+            'product_code':    self.product_code,
+            'tariff_code':     self.tariff_code,
+            'gsp_region':      self.gsp_region,
+        })
+        return d
+
 def _parse_time(s: str) -> time:
     h, m = s.split(':')
     return time(int(h), int(m))
@@ -202,14 +245,44 @@ def _to_utc_timestamp(dt) -> float:
     # pandas Timestamp
     return float(dt.value) / 1e9
 
+
+# ---------------------------------------------------------------------------
+# EDF tariff classes
+# ---------------------------------------------------------------------------
+
+class EdfFlatTariff(OctopusFlatTariff):
+    def to_dict(self) -> dict:
+        d = super().to_dict()
+        d["type"] = "edf_flat"
+        return d
+
+
+class EdfDayNightTariff(OctopusDayNightTariff):
+    def to_dict(self) -> dict:
+        d = super().to_dict()
+        d["type"] = "edf_day_night"
+        return d
+
+
+class EdfTimeOfUseTariff(OctopusTimeOfUseTariff):
+    def to_dict(self) -> dict:
+        d = super().to_dict()
+        d["type"] = "edf_agile"
+        return d
+
+
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 _TYPE_MAP = {
-    'flat':      FlatTariff,
-    'day_night': DayNightTariff,
-    'octopus_flat': OctopusFlatTariff,
-    'octopus_agile': OctopusTimeOfUseTariff
+    'flat':             FlatTariff,
+    'day_night':        DayNightTariff,
+    'octopus_flat':     OctopusFlatTariff,
+    'octopus_day_night': OctopusDayNightTariff,
+    'octopus_agile':    OctopusTimeOfUseTariff,
+    'edf_flat':          EdfFlatTariff,
+    'edf_day_night':     EdfDayNightTariff,
+    'edf_agile':         EdfTimeOfUseTariff,
 }
 
 
