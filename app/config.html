@@ -120,6 +120,8 @@
   .badge-day_night  { background: #1a3347; color: #67e8f9; }
   .badge-octopus         { background: #1a3325; color: #34d399; }
   .badge-octopus_day_night { background: #1a2f3a; color: #67e8f9; }
+  .badge-edf          { background: #1e2b1a; color: #86efac; }
+  .badge-edf_day_night { background: #1a2b2f; color: #67e8f9; }
   .badge-baseline   { background: rgba(245,158,11,.15); color: var(--gold); border: 1px solid rgba(245,158,11,.3); }
   .tariff-body { padding: 16px; border-top: 1px solid var(--border); display: none; }
   .tariff-body.open { display: block; }
@@ -437,6 +439,47 @@
     font-size: 12px; color: var(--muted); display: flex; gap: 20px; flex-wrap: wrap;
   }
   .rate-detail-row span strong { color: var(--text); }
+  /* EDF Import Modal */
+  #edf-modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.7); backdrop-filter: blur(3px);
+    z-index: 300; align-items: center; justify-content: center;
+  }
+  #edf-modal-overlay.visible { display: flex; }
+  #edf-modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 28px 28px 24px;
+    max-width: 520px; width: calc(100% - 40px);
+    box-shadow: 0 24px 64px rgba(0,0,0,.6);
+  }
+  #edf-modal .modal-icon { font-size: 32px; margin-bottom: 14px; }
+  #edf-modal h3 { font-size: 16px; font-weight: 700; margin-bottom: 10px; }
+  #edf-modal .modal-body { font-size: 13px; color: var(--muted); line-height: 1.6; margin-bottom: 18px; }
+  #edf-product-list {
+    max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+    margin-bottom: 16px;
+  }
+  .edf-product-option {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
+    cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  .edf-product-option:hover { border-color: #86efac; background: rgba(134,239,172,.04); }
+  .edf-product-option input[type="checkbox"] {
+    margin-top: 3px; flex-shrink: 0; accent-color: #86efac;
+    width: 15px; height: 15px; cursor: pointer;
+  }
+  .edf-product-option .ep-text strong { display: block; font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+  .edf-product-option .ep-text span   { font-size: 12px; color: var(--muted); }
+  .edf-product-option .ep-badge {
+    margin-left: auto; flex-shrink: 0; font-size: 10px; font-weight: 600;
+    padding: 2px 7px; border-radius: 4px; align-self: center;
+  }
+  .ep-badge-variable { background: rgba(134,239,172,.15); color: #86efac; border: 1px solid rgba(134,239,172,.3); }
+  .ep-badge-fixed    { background: rgba(52,211,153,.12);  color: var(--accent2); border: 1px solid rgba(52,211,153,.3); }
+  #edf-status { font-size: 12px; color: var(--muted); min-height: 18px; margin-bottom: 12px; }
+  #edf-status.err { color: var(--danger); }
+  #edf-status.ok  { color: var(--accent2); }
 </style>
 </head>
 <body>
@@ -525,6 +568,7 @@
         <button class="btn-ghost btn-sm" onclick="addTariff('flat')">+ Flat Rate</button>
         <button class="btn-ghost btn-sm" onclick="addTariff('day_night')">+ Economy 7</button>
         <button class="btn-ghost btn-sm" style="color:var(--accent2);border-color:var(--accent2)" onclick="openOctoModal()">+ Octopus Tariff</button>
+        <button class="btn-ghost btn-sm" style="color:#86efac;border-color:#86efac" onclick="openEdfModal()">+ EDF Tariff</button>
       </div>
     </div>
     <div id="tariff-list">
@@ -695,7 +739,6 @@
       the Octopus API and added to the comparison list — no API key required.
       The tariff will be available immediately for simulation.
     </div>
-
     <div class="field" style="margin-bottom:14px">
       <label>Grid Region (GSP)</label>
       <div id="octo-region-row">
@@ -718,16 +761,13 @@
       </div>
       <div class="hint">Select the region that covers your property</div>
     </div>
-
     <div class="section-label" style="margin-bottom:10px">Available Products</div>
     <div id="octo-product-list">
       <div style="text-align:center;padding:20px;color:var(--muted)">
         <span class="spinner"></span> Loading products&hellip;
       </div>
     </div>
-
     <div id="octo-status"></div>
-
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeOctoModal()">Cancel</button>
       <button class="btn-primary" id="octo-import-btn" onclick="doOctoImport()" disabled>Import Tariff</button>
@@ -799,7 +839,6 @@
     <div style="font-size:28px;margin-bottom:12px">✏️</div>
     <h3>Edit Octopus Tariff</h3>
     <div class="edit-tariff-code" id="octo-edit-tariff-code"></div>
-
     <div id="octo-edit-fields-flat" style="display:none">
       <div class="row row-2">
         <div class="field">
@@ -861,6 +900,49 @@
   </div>
 </div>
 
+<!-- EDF Import Modal -->
+<div id="edf-modal-overlay">
+  <div id="edf-modal">
+    <div class="modal-icon">⚡</div>
+    <h3>Import EDF Energy Tariff</h3>
+    <div class="modal-body">
+      Select a tariff product and your grid region. Rates are fetched live from
+      the EDF open tariff API and added to the comparison list — no account required.
+    </div>
+    <div class="field" style="margin-bottom:14px">
+      <label>Grid Region (GSP)</label>
+      <select id="edf-region">
+        <option value="_A">_A — East England</option>
+        <option value="_B">_B — East Midlands</option>
+        <option value="_C" selected>_C — Lincolnshire / East Midlands (default)</option>
+        <option value="_D">_D — London</option>
+        <option value="_E">_E — Merseyside / North Wales</option>
+        <option value="_F">_F — Midlands</option>
+        <option value="_G">_G — North West</option>
+        <option value="_H">_H — South East</option>
+        <option value="_J">_J — South</option>
+        <option value="_K">_K — South West</option>
+        <option value="_L">_L — Yorkshire</option>
+        <option value="_M">_M — North Scotland</option>
+        <option value="_N">_N — South Scotland</option>
+        <option value="_P">_P — North Wales / Mersey</option>
+      </select>
+      <div class="hint">Select the region that covers your property</div>
+    </div>
+    <div class="section-label" style="margin-bottom:10px">Available Products</div>
+    <div id="edf-product-list">
+      <div style="text-align:center;padding:20px;color:var(--muted)">
+        <span class="spinner"></span> Loading products&hellip;
+      </div>
+    </div>
+    <div id="edf-status"></div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeEdfModal()">Cancel</button>
+      <button class="btn-primary" id="edf-import-btn" onclick="doEdfImport()" disabled>Import Tariff</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let _tariffs     = [];
 let _baselineId  = '';
@@ -900,6 +982,13 @@ async function loadConfig() {
     (cfg?.octopus_tariffs || []).forEach(t => {
       if (!_tariffs.find(x => x.id === t.id)) {
         _tariffs.push(_normOctoStored(t));
+      }
+    });
+
+    // Restore any in-memory EDF tariffs returned alongside the config
+    (cfg?.edf_tariffs || []).forEach(t => {
+      if (!_tariffs.find(x => x.id === t.id)) {
+        _tariffs.push(_normEdfStored(t));
       }
     });
 
@@ -977,14 +1066,22 @@ function renderTariffs() {
     const tid        = t.id || slugify(t.name);
     const isBaseline = tid === _baselineId;
     const isOcto     = t.type === 'octopus_flat' || t.type === 'octopus_agile' || t.type === 'octopus_day_night';
+    const isEdf      = t.type === 'edf_flat'     || t.type === 'edf_agile'     || t.type === 'edf_day_night';
+    const isApiTariff = isOcto || isEdf;
     const typeLabel  = t.type === 'flat'               ? 'Flat Rate'
                      : t.type === 'day_night'          ? 'Economy 7'
                      : t.type === 'octopus_agile'      ? 'Octopus Agile'
                      : t.type === 'octopus_day_night'  ? 'Octopus Day/Night'
+                     : t.type === 'octopus_flat'       ? 'Octopus'
+                     : t.type === 'edf_agile'          ? 'EDF Agile'
+                     : t.type === 'edf_day_night'      ? 'EDF Day/Night'
+                     : t.type === 'edf_flat'           ? 'EDF'
                      : 'Octopus';
     const badgeClass = t.type === 'flat'               ? 'badge-flat'
                      : t.type === 'day_night'          ? 'badge-day_night'
                      : t.type === 'octopus_day_night'  ? 'badge-octopus_day_night'
+                     : t.type === 'edf_day_night'      ? 'badge-edf_day_night'
+                     : t.type === 'edf_flat' || t.type === 'edf_agile' ? 'badge-edf'
                      : 'badge-octopus';
 
     const card = document.createElement('div');
@@ -1012,7 +1109,7 @@ function renderTariffs() {
            <span>Standing charge: <strong>${escHtml(t.standing_charge??'?')}p/day</strong></span>
          </div>`;
 
-    const bodyHtml = isOcto
+    const bodyHtml = isApiTariff
       ? `<div class="tariff-body ${t._open ? 'open' : ''}">
           <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6">
             Product: <code style="color:var(--text)">${escHtml(t.product_code||'')}</code>
@@ -1023,7 +1120,7 @@ function renderTariffs() {
           <div class="tariff-actions">
             ${actionsHtml}
             <span class="spacer"></span>
-            ${t.type !== 'octopus_agile' ? `<button class="btn-ghost btn-sm" onclick="openOctoEditModal(${i})">&#9998; Edit Rates</button>` : ''}
+            ${(t.type === 'octopus_flat' || t.type === 'octopus_day_night') ? `<button class="btn-ghost btn-sm" onclick="openOctoEditModal(${i})">&#9998; Edit Rates</button>` : ''}
             <button class="btn-danger btn-sm" onclick="removeTariff(${i})">Remove</button>
           </div>
         </div>`
@@ -1154,14 +1251,13 @@ async function removeTariff(i) {
   const t = _tariffs[i];
   const removedId = t.id || slugify(t.name);
   const isOcto = t.type === 'octopus_flat' || t.type === 'octopus_agile' || t.type === 'octopus_day_night';
-
-  // For Octopus tariffs, call the backend DELETE endpoint so the tariff is
-  // removed from octopus_tariffs.json and won't be re-imported on next pipeline run.
-  if (isOcto && removedId) {
+  const isEdf  = t.type === 'edf_flat'     || t.type === 'edf_agile'     || t.type === 'edf_day_night';
+  if ((isOcto || isEdf) && removedId) {
+    const endpoint = isEdf
+      ? `/api/edf/tariff/${encodeURIComponent(removedId)}`
+      : `/api/octopus/tariff/${encodeURIComponent(removedId)}`;
     try {
-      const r = await fetch(`/api/octopus/tariff/${encodeURIComponent(removedId)}`, {
-        method: 'DELETE',
-      });
+      const r = await fetch(endpoint, { method: 'DELETE' });
       const d = await r.json();
       if (!d.success) {
         toast('Failed to remove Octopus tariff from server: ' + (d.error || 'Unknown error'), 'err');
@@ -1181,7 +1277,7 @@ async function removeTariff(i) {
 
   // Non-Octopus tariffs still need a Save to persist; Octopus tariffs are
   // already persisted by the DELETE call above.
-  if (!isOcto) {
+  if (!isOcto && !isEdf) {
     markDirty();
   } else {
     toast('Octopus tariff removed ✓', 'ok');
@@ -1276,7 +1372,7 @@ async function saveConfig() {
       export_mpan:    document.getElementById('acct-export-mpan').value.trim(),
       export_serial:  document.getElementById('acct-export-serial').value.trim(),
     },
-    tariffs: _tariffs.filter(t => t.type !== 'octopus_flat' && t.type !== 'octopus_agile' && t.type !== 'octopus_day_night').map(t => {
+    tariffs: _tariffs.filter(t => !['octopus_flat','octopus_agile','octopus_day_night','edf_flat','edf_agile','edf_day_night'].includes(t.type)).map(t => {
       const base = {
         id:              t.id || slugify(t.name),
         name:            t.name,
@@ -1661,6 +1757,57 @@ function _normOctoStored(t) {
   return base;
 }
 
+// ── EDF tariff normalisation helpers ──────────────────────────────────────
+
+function _normEdfResponse(d) {
+  const type = d.tariff_type || 'edf_flat';
+  const base = {
+    id:              d.tariff_id,
+    name:            d.tariff_name || d.tariff_id,
+    type,
+    standing_charge: String(d.standing_charge_p ?? '0'),
+    export_rate:     '0',
+    slot_count:      d.rate_slots ?? null,
+    product_code:    d.product_code ?? '',
+    tariff_code:     d.tariff_code  ?? '',
+    gsp_region:      d.gsp_region   ?? '',
+    _open:           false,
+  };
+  if (type === 'edf_day_night') {
+    base.day_rate    = String(d.day_rate_p   ?? '');
+    base.night_rate  = String(d.night_rate_p ?? '');
+    base.night_start = d.night_start ?? '00:00';
+    base.night_end   = d.night_end   ?? '07:00';
+  } else {
+    base.import_rate = '';
+  }
+  return base;
+}
+
+function _normEdfStored(t) {
+  const base = {
+    id:              t.id,
+    name:            t.name,
+    type:            t.type,
+    standing_charge: String(t.standing_charge ?? '0'),
+    export_rate:     String(t.export_rate ?? '0'),
+    slot_count:      t.slot_count ?? null,
+    product_code:    t.product_code ?? '',
+    tariff_code:     t.tariff_code  ?? '',
+    gsp_region:      t.gsp_region   ?? '',
+    _open:           false,
+  };
+  if (t.type === 'edf_day_night') {
+    base.day_rate    = String(t.day_rate   ?? '');
+    base.night_rate  = String(t.night_rate ?? '');
+    base.night_start = t.night_start ?? '00:00';
+    base.night_end   = t.night_end   ?? '07:00';
+  } else {
+    base.import_rate = String(t.import_rate ?? '');
+  }
+  return base;
+}
+
 // ── Octopus tariff edit modal ──────────────────────────────────────────────
 
 let _octoEditIdx = null;
@@ -1910,6 +2057,136 @@ async function doOctoImport() {
   }
 
   btn.disabled = _octoSelectedSet.size === 0;
+}
+
+// ── EDF Import Modal ───────────────────────────────────────────────────────
+
+let _edfProducts    = [];
+let _edfSelectedSet = new Set();
+
+async function openEdfModal() {
+  document.getElementById('edf-modal-overlay').classList.add('visible');
+  document.getElementById('edf-import-btn').disabled = true;
+  document.getElementById('edf-status').textContent = '';
+  document.getElementById('edf-status').className = '';
+  _edfSelectedSet = new Set();
+
+  if (_edfProducts.length === 0) {
+    await edfLoadProducts();
+  } else {
+    edfRenderProducts();
+  }
+}
+
+function closeEdfModal() {
+  document.getElementById('edf-modal-overlay').classList.remove('visible');
+}
+
+document.getElementById('edf-modal-overlay').addEventListener('click', function(e) {
+  if (e.target === this) closeEdfModal();
+});
+
+async function edfLoadProducts() {
+  const list = document.getElementById('edf-product-list');
+  list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted)"><span class="spinner"></span> Loading products&hellip;</div>';
+  try {
+    const r = await fetch('/api/edf/products');
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error);
+    _edfProducts = (d.products || []).sort((a, b) => {
+      const score = p => p.is_tracker ? 1 : p.is_variable ? 0 : 2;
+      return score(a) - score(b);
+    });
+    edfRenderProducts();
+  } catch(e) {
+    list.innerHTML = `<div style="color:var(--danger);font-size:13px;padding:12px">
+      &#10007; Could not load EDF products: ${escHtml(e.message)}
+    </div>`;
+  }
+}
+
+function edfRenderProducts() {
+  const list = document.getElementById('edf-product-list');
+  if (!_edfProducts.length) {
+    list.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:12px">No products available.</div>';
+    return;
+  }
+  list.innerHTML = _edfProducts.map((p, i) => {
+    const badgeCls = p.is_variable ? 'ep-badge-variable' : 'ep-badge-fixed';
+    const badgeTxt = p.is_tracker ? 'Tracker' : p.is_variable ? 'Variable' : 'Fixed';
+    const desc = p.description
+      ? p.description.replace(/<[^>]+>/g, '').substring(0, 100) + (p.description.length > 100 ? '…' : '')
+      : '';
+    return `
+      <label class="edf-product-option">
+        <input type="checkbox" value="${i}" onchange="edfToggleProduct(${i}, this.checked)" />
+        <span class="ep-text">
+          <strong>${escHtml(p.display_name || p.code)}</strong>
+          <span>${escHtml(p.code)}${desc ? ' — ' + escHtml(desc) : ''}</span>
+        </span>
+        <span class="ep-badge ${badgeCls}">${badgeTxt}</span>
+      </label>`;
+  }).join('');
+}
+
+function edfToggleProduct(i, checked) {
+  if (checked) _edfSelectedSet.add(i); else _edfSelectedSet.delete(i);
+  document.getElementById('edf-import-btn').disabled = _edfSelectedSet.size === 0;
+  document.getElementById('edf-import-btn').textContent =
+    _edfSelectedSet.size > 1 ? `Import ${_edfSelectedSet.size} Tariffs` : 'Import Tariff';
+  document.getElementById('edf-status').textContent = '';
+  document.getElementById('edf-status').className = '';
+}
+
+async function doEdfImport() {
+  if (_edfSelectedSet.size === 0) return;
+
+  const btn    = document.getElementById('edf-import-btn');
+  const status = document.getElementById('edf-status');
+  const region = document.getElementById('edf-region').value;
+
+  btn.disabled       = true;
+  status.textContent = '';
+  status.className   = '';
+
+  const indices  = [..._edfSelectedSet];
+  const total    = indices.length;
+  let   imported = 0;
+  let   failed   = 0;
+
+  for (const i of indices) {
+    const p = _edfProducts[i];
+    status.textContent = `Importing ${p.display_name || p.code}…`;
+    try {
+      const r = await fetch('/api/edf/import-tariff', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ product_code: p.code, gsp_region: region }),
+      });
+      const d = await r.json();
+      if (!d.success) throw new Error(d.error);
+
+      _tariffs = _tariffs.filter(t => t.id !== d.tariff_id);
+      _tariffs.push(_normEdfResponse(d));
+      imported++;
+    } catch(e) {
+      failed++;
+      status.textContent = `✗ Failed to import ${p.display_name || p.code}: ${e.message}`;
+      status.className   = 'err';
+    }
+  }
+
+  if (imported > 0) {
+    renderTariffs();
+    markDirty();
+    status.textContent = imported === total
+      ? `✓ ${imported} tariff${imported > 1 ? 's' : ''} imported`
+      : `✓ ${imported} imported, ${failed} failed`;
+    status.className = failed > 0 ? 'err' : 'ok';
+    setTimeout(closeEdfModal, 1200);
+  }
+
+  btn.disabled = _edfSelectedSet.size === 0;
 }
 
 // ── Octopus Account card helpers ───────────────────────────────────────────

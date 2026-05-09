@@ -45,6 +45,14 @@ _OCTO_CACHE_PATH = os.environ.get(
     os.path.join(os.path.dirname(__file__), '..', 'data', 'octopus_tariffs.json')
 )
 
+from app import edf_client as _edf
+from app.tariffs import EdfFlatTariff, EdfDayNightTariff, EdfTimeOfUseTariff
+
+_EDF_CACHE_PATH = os.environ.get(
+    'EDF_CACHE_PATH',
+    os.path.join(os.path.dirname(__file__), '..', 'data', 'edf_tariffs.json')
+)
+
 
 def _save_octo_tariffs():
     """Persist all in-memory Octopus tariffs to disk as JSON."""
@@ -138,16 +146,84 @@ def _load_octo_tariffs() -> list:
     return loaded
 
 
+def _save_edf_tariffs():
+    """Persist all in-memory EDF tariffs to disk as JSON."""
+    edf = [t.to_dict() for t in _tariffs
+           if isinstance(t, (EdfFlatTariff, EdfDayNightTariff, EdfTimeOfUseTariff))]
+    try:
+        cache_dir = os.path.dirname(_EDF_CACHE_PATH)
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+        with open(_EDF_CACHE_PATH, 'w') as f:
+            json.dump(edf, f)
+        log.info('Saved %d EDF tariff(s) to %s', len(edf), _EDF_CACHE_PATH)
+    except Exception as e:
+        log.warning('Could not save EDF tariffs: %s', e)
+
+
+def _load_edf_tariffs() -> list:
+    """Reload persisted EDF tariffs from disk and return as tariff objects."""
+    try:
+        with open(_EDF_CACHE_PATH, 'r') as f:
+            entries = json.load(f)
+    except FileNotFoundError:
+        return []
+    except Exception as e:
+        log.warning('Could not load EDF tariffs: %s', e)
+        return []
+
+    loaded = []
+    for entry in entries:
+        try:
+            ttype = entry.get('type')
+            base  = {
+                'id':              entry['id'],
+                'name':            entry['name'],
+                'standing_charge': entry.get('standing_charge', 0),
+                'export_rate':     entry.get('export_rate', 0),
+                'product_code':    entry.get('product_code', ''),
+                'tariff_code':     entry.get('tariff_code', ''),
+                'gsp_region':      entry.get('gsp_region', ''),
+            }
+            if ttype == 'edf_flat':
+                loaded.append(EdfFlatTariff({**base, 'import_rate': entry.get('import_rate', 0)}))
+            elif ttype == 'edf_day_night':
+                loaded.append(EdfDayNightTariff({
+                    **base,
+                    'day_rate':    entry.get('day_rate', 0),
+                    'night_rate':  entry.get('night_rate', 0),
+                    'night_start': entry.get('night_start', '00:00'),
+                    'night_end':   entry.get('night_end',   '07:00'),
+                }))
+            elif ttype == 'edf_agile':
+                today     = _dt.now(_tz_mod.utc)
+                days      = _parse_history_days(_history_range())
+                date_from = _dt(today.year - (days // 365), today.month, today.day, tzinfo=_tz_mod.utc)
+                rates     = _edf.get_tariff_unit_rates(
+                    entry.get('product_code', ''),
+                    entry.get('tariff_code', ''),
+                    date_from, today,
+                )
+                loaded.append(EdfTimeOfUseTariff({**base, 'rates': rates}))
+        except Exception as e:
+            log.warning('Could not restore EDF tariff %s: %s', entry.get('id'), e)
+
+    log.info('Restored %d EDF tariff(s) from %s', len(loaded), _EDF_CACHE_PATH)
+    return loaded
+
+
 def _reload_tariffs():
     global _cfg, _tariffs
     _cfg     = cfg_module.load(_SETTINGS_PATH)
     _tariffs = load_tariffs(_cfg)
     _tariffs += _load_octo_tariffs()
+    _tariffs += _load_edf_tariffs()
 
 try:
     _cfg     = cfg_module.load(_SETTINGS_PATH)
     _tariffs = load_tariffs(_cfg)
     _tariffs += _load_octo_tariffs()
+    _tariffs += _load_edf_tariffs()
     log.info('Loaded %d tariff(s) from %s', len(_tariffs), _SETTINGS_PATH)
 except Exception as _boot_err:
     log.error('FATAL: Could not load config at startup: %s', _boot_err)
@@ -284,6 +360,13 @@ def get_config():
         ]
         if octo_tariffs:
             raw.setdefault('octopus_tariffs', octo_tariffs)
+
+        edf_tariffs = [
+            t.to_dict() for t in _tariffs
+            if isinstance(t, (EdfFlatTariff, EdfDayNightTariff, EdfTimeOfUseTariff))
+        ]
+        if edf_tariffs:
+            raw.setdefault('edf_tariffs', edf_tariffs)
 
         # Mask the stored API key — send a sentinel so the UI can show
         # "key saved" without echoing the real value to the browser.
@@ -686,6 +769,197 @@ def _get_tariff(tariff_id):
     if not tariff_id:
         return _tariffs[0] if _tariffs else None
     return next((t for t in _tariffs if t.id == tariff_id), None)
+
+
+# ── EDF routes ─────────────────────────────────────────────────────────────
+@app.get("/api/edf/products")
+def edf_products():
+    """List available EDF electricity products."""
+    try:
+        products = _edf.list_products()
+        return jsonify({"success": True, "count": len(products), "products": products})
+    except Exception as e:
+        log.exception("edf_products failed")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.get("/api/edf/products/<product_code>/tariff-codes")
+def edf_tariff_codes(product_code):
+    """Return GSP region → tariff code map for an EDF product."""
+    try:
+        detail   = _edf.get_product_detail(product_code)
+        regional = detail.get("single_register_electricity_tariffs", {})
+        regions  = {}
+        for suffix, payment_types in regional.items():
+            ddc = payment_types.get("direct_debit_monthly", {})
+            if "code" in ddc:
+                regions[suffix] = ddc["code"]
+        return jsonify({"success": True, "product_code": product_code, "regions": regions})
+    except Exception as e:
+        log.exception("edf_tariff_codes failed for %s", product_code)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.post("/api/edf/import-tariff")
+def edf_import_tariff():
+    """
+    Fetch rates from the EDF API and add the tariff to the simulation.
+
+    Expected JSON body:
+      {
+        "product_code": "...",
+        "tariff_code":  "...",   // optional — resolved from region if absent
+        "gsp_region":   "_C",   // optional, default "_C"
+        "date_from":    "YYYY-MM-DD",  // optional
+        "date_to":      "YYYY-MM-DD",  // optional
+      }
+    """
+    global _tariffs, _config_changed_at
+    try:
+        body = request.get_json(force=True) or {}
+
+        product_code = body.get("product_code", "").strip()
+        if not product_code:
+            return jsonify({"success": False, "error": "product_code is required"}), 400
+
+        gsp_region  = body.get("gsp_region", "_C").strip()
+        tariff_code = body.get("tariff_code", "").strip()
+
+        if not tariff_code:
+            detail      = _edf.get_product_detail(product_code)
+            tariff_code = _edf.resolve_tariff_code(detail, gsp_region)
+            if not tariff_code:
+                return jsonify({
+                    "success": False,
+                    "error":   f"Could not resolve tariff code for {product_code} / {gsp_region}",
+                }), 400
+
+        today   = _dt.now(_tz_mod.utc)
+        date_to = _dt.fromisoformat(body["date_to"]).replace(tzinfo=_tz_mod.utc) \
+                  if body.get("date_to") else today
+        if body.get("date_from"):
+            date_from = _dt.fromisoformat(body["date_from"]).replace(tzinfo=_tz_mod.utc)
+        else:
+            days      = _parse_history_days(_history_range())
+            date_from = _dt(today.year - (days // 365), today.month, today.day, tzinfo=_tz_mod.utc)
+
+        rates    = _edf.get_tariff_unit_rates(product_code, tariff_code, date_from, date_to)
+        standing = _edf.get_tariff_standing_charges(product_code, tariff_code, date_from, date_to)
+
+        if not rates:
+            return jsonify({
+                "success": False,
+                "error":   "No unit rates returned from EDF API for the requested period",
+            }), 502
+
+        standing_charge_p = 0.0
+        if standing:
+            standing.sort(key=lambda x: x.get("valid_from", ""), reverse=True)
+            standing_charge_p = float(standing[0].get("value_inc_vat", 0.0))
+
+        try:
+            detail_name = _edf.get_product_detail(product_code).get("display_name", product_code)
+        except Exception:
+            detail_name = product_code
+
+        tariff_id   = _slugify(f"edf_{product_code}_{gsp_region}")
+        tariff_name = f"EDF {detail_name} ({_GSP_REGION_LABELS.get(gsp_region, gsp_region)})"
+
+        # Classify using the same tariff code structure rules as Octopus
+        from app.octopus_client import classify_tariff
+        tc_type   = classify_tariff(tariff_code)
+        day_night = None
+
+        if tc_type == 'dual_register':
+            day_r   = _edf.get_tariff_day_rates(  product_code, tariff_code, date_from, date_to)
+            night_r = _edf.get_tariff_night_rates(product_code, tariff_code, date_from, date_to)
+            day_night = _parse_dual_register_rates(day_r, night_r)
+        elif tc_type == 'single_register':
+            day_night = _parse_day_night_slots(rates)
+
+        base_cfg = {
+            "id":              tariff_id,
+            "name":            tariff_name,
+            "standing_charge": standing_charge_p,
+            "export_rate":     0.0,
+            "product_code":    product_code,
+            "tariff_code":     tariff_code,
+            "gsp_region":      gsp_region,
+        }
+
+        if day_night:
+            new_tariff = EdfDayNightTariff({
+                **base_cfg,
+                "day_rate":    day_night["day_rate"],
+                "night_rate":  day_night["night_rate"],
+                "night_start": day_night["night_start"],
+                "night_end":   day_night["night_end"],
+            })
+        elif tc_type == 'agile' or len(set(r.get("value_inc_vat") for r in rates)) > 1:
+            new_tariff = EdfTimeOfUseTariff({**base_cfg, "rates": rates})
+        else:
+            unique_rates = set(r.get("value_inc_vat") for r in rates)
+            new_tariff   = EdfFlatTariff({**base_cfg, "import_rate": next(iter(unique_rates), 0.0)})
+
+        _tariffs = [t for t in _tariffs if t.id != tariff_id]
+        _tariffs.append(new_tariff)
+
+        log.info("Imported EDF tariff %s (%s) — %d rate slots, standing %.2fp/day",
+                 tariff_id, tariff_code, len(rates), standing_charge_p)
+
+        _save_edf_tariffs()
+        _config_changed_at = datetime.now(timezone.utc).isoformat()
+
+        resp = {
+            "success":           True,
+            "tariff_id":         tariff_id,
+            "tariff_code":       tariff_code,
+            "product_code":      product_code,
+            "gsp_region":        gsp_region,
+            "tariff_name":       new_tariff.name,
+            "tariff_type":       new_tariff.to_dict()["type"],
+            "rate_slots":        len(rates),
+            "standing_charge_p": standing_charge_p,
+            "date_from":         date_from.date().isoformat(),
+            "date_to":           date_to.date().isoformat(),
+        }
+        if day_night:
+            resp.update({
+                "day_rate_p":   day_night["day_rate"],
+                "night_rate_p": day_night["night_rate"],
+                "night_start":  day_night["night_start"],
+                "night_end":    day_night["night_end"],
+            })
+        return jsonify(resp)
+
+    except requests.exceptions.ConnectionError as e:
+        return jsonify({"success": False, "error": f"Could not reach EDF API: {e}"}), 502
+    except requests.exceptions.HTTPError as e:
+        return jsonify({"success": False, "error": f"EDF API error: {e}"}), 502
+    except Exception as e:
+        log.exception("edf_import_tariff failed")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.delete("/api/edf/tariff/<tariff_id>")
+def edf_remove_tariff(tariff_id):
+    """Remove a previously imported EDF tariff from the in-memory list."""
+    global _tariffs, _config_changed_at
+    before   = len(_tariffs)
+    _tariffs = [t for t in _tariffs if t.id != tariff_id]
+    _save_edf_tariffs()
+    _config_changed_at = datetime.now(timezone.utc).isoformat()
+    return jsonify({"success": True, "removed": before - len(_tariffs)})
+
+
+@app.delete("/api/edf/cache")
+def edf_clear_cache():
+    """Delete all locally cached EDF API responses."""
+    try:
+        removed = _edf.clear_cache()
+        return jsonify({"success": True, "files_removed": removed})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 # ── Octopus Energy API  (Phase 1 — public endpoints, no auth required) ────
 

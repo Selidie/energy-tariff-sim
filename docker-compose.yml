@@ -35,6 +35,7 @@ services:
     environment:
       - PORT=5011
       - CONFIG_PATH=/app/config/settings.yaml
+      - EDF_BRAND=EDF
       # Solar Assistant import — InfluxDB 2.x connection (same instance as mqtt-bridge).
       # Only required if you use the SA backup import feature. Uncomment and set if
       # INFLUX_URL / INFLUX_TOKEN are not already present in your environment:

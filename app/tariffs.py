@@ -73,6 +73,7 @@ class DayNightTariff(BaseTariff):
             return self._night_rate
         return self._day_rate
 
+
 # ---------------------------------------------------------------------------
 # Octopus flat tariff  (single static rate fetched from Octopus API)
 # ---------------------------------------------------------------------------
@@ -244,6 +245,32 @@ def _to_utc_timestamp(dt) -> float:
     # pandas Timestamp
     return float(dt.value) / 1e9
 
+
+# ---------------------------------------------------------------------------
+# EDF tariff classes
+# ---------------------------------------------------------------------------
+
+class EdfFlatTariff(OctopusFlatTariff):
+    def to_dict(self) -> dict:
+        d = super().to_dict()
+        d["type"] = "edf_flat"
+        return d
+
+
+class EdfDayNightTariff(OctopusDayNightTariff):
+    def to_dict(self) -> dict:
+        d = super().to_dict()
+        d["type"] = "edf_day_night"
+        return d
+
+
+class EdfTimeOfUseTariff(OctopusTimeOfUseTariff):
+    def to_dict(self) -> dict:
+        d = super().to_dict()
+        d["type"] = "edf_agile"
+        return d
+
+
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
@@ -253,6 +280,9 @@ _TYPE_MAP = {
     'octopus_flat':     OctopusFlatTariff,
     'octopus_day_night': OctopusDayNightTariff,
     'octopus_agile':    OctopusTimeOfUseTariff,
+    'edf_flat':          EdfFlatTariff,
+    'edf_day_night':     EdfDayNightTariff,
+    'edf_agile':         EdfTimeOfUseTariff,
 }
 
 
