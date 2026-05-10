@@ -120,14 +120,16 @@
   .badge-day_night  { background: #1a3347; color: #67e8f9; }
   .badge-octopus         { background: #1a3325; color: #34d399; }
   .badge-octopus_day_night { background: #1a2f3a; color: #67e8f9; }
+  .badge-octopus_seg       { background: #1f2a1a; color: #86efac; }
+  .seg-current-badge       { background: #14532d; color: #86efac; border-radius: 4px; padding: 1px 8px; font-size: 11px; font-weight: 600; }
   .badge-edf          { background: #1e2b1a; color: #86efac; }
   .badge-edf_day_night { background: #1a2b2f; color: #67e8f9; }
   .badge-baseline   { background: rgba(245,158,11,.15); color: var(--gold); border: 1px solid rgba(245,158,11,.3); }
+  .badge-seg-active { background: rgba(134,239,172,.15); color: #86efac; border: 1px solid rgba(134,239,172,.3); }
   .tariff-body { padding: 16px; border-top: 1px solid var(--border); display: none; }
   .tariff-body.open { display: block; }
   .tariff-actions { display: flex; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); align-items: center; }
   .tariff-actions .spacer { flex: 1; }
-
   .fields-flat, .fields-e7 { display: none; }
   .fields-flat.active, .fields-e7.active { display: block; }
 
@@ -653,7 +655,16 @@
         + Import This Tariff
       </button>
     </div>
+<div id="acct-detected-seg" style="display:none; margin-top:10px"
+     data-product-code="" data-tariff-code="" data-gsp-region="">
+  <div style="font-size:13px; color:var(--muted); margin-bottom:8px">
+    SEG export tariff detected:
+    <code id="acct-seg-tariff-code" style="color:var(--text)"></code>
   </div>
+  <button id="acct-seg-import-btn" class="btn-secondary btn-sm"
+          onclick="acctImportSEGTariff()">+ Import SEG Tariff</button>
+  </div>
+</div>
 
   <!-- Solar Assistant Backup Import -->
   <div class="card">
@@ -1065,34 +1076,37 @@ function renderTariffs() {
   _tariffs.forEach((t, i) => {
     const tid        = t.id || slugify(t.name);
     const isBaseline = tid === _baselineId;
-    const isOcto     = t.type === 'octopus_flat' || t.type === 'octopus_agile' || t.type === 'octopus_day_night';
+    const isOcto     = t.type === 'octopus_flat' || t.type === 'octopus_agile' || t.type === 'octopus_day_night' || t.type === 'octopus_seg';
     const isEdf      = t.type === 'edf_flat'     || t.type === 'edf_agile'     || t.type === 'edf_day_night';
     const isApiTariff = isOcto || isEdf;
     const typeLabel  = t.type === 'flat'               ? 'Flat Rate'
                      : t.type === 'day_night'          ? 'Economy 7'
                      : t.type === 'octopus_agile'      ? 'Octopus Agile'
                      : t.type === 'octopus_day_night'  ? 'Octopus Day/Night'
-                     : t.type === 'octopus_flat'       ? 'Octopus'
-                     : t.type === 'edf_agile'          ? 'EDF Agile'
-                     : t.type === 'edf_day_night'      ? 'EDF Day/Night'
-                     : t.type === 'edf_flat'           ? 'EDF'
+                     : t.type === 'octopus_seg'        ? 'Octopus SEG Export'
                      : 'Octopus';
     const badgeClass = t.type === 'flat'               ? 'badge-flat'
                      : t.type === 'day_night'          ? 'badge-day_night'
                      : t.type === 'octopus_day_night'  ? 'badge-octopus_day_night'
-                     : t.type === 'edf_day_night'      ? 'badge-edf_day_night'
-                     : t.type === 'edf_flat' || t.type === 'edf_agile' ? 'badge-edf'
+                     : t.type === 'octopus_seg'        ? 'badge-octopus_seg'
                      : 'badge-octopus';
 
     const card = document.createElement('div');
     card.className = `tariff-card${isBaseline ? ' is-baseline' : ''}`;
     card.dataset.idx = i;
 
-    const actionsHtml = isBaseline
-      ? `<span style="font-size:12px;color:var(--gold)">&#9733; This is your current tariff &mdash; used as the comparison baseline</span>`
+    const actionsHtml = t.type === 'octopus_seg'
+      ? ''  // SEG tariffs are export-only — no import baseline concept
+      : isBaseline
+      ? `<span style="font-size:12px;color:var(--gold)">&#9733; This is your current import tariff &mdash; used as the comparison baseline</span>`
       : `<button class="btn-gold btn-sm" onclick="setBaseline(${i})">&#9733; Set as Current Tariff</button>`;
 
-    const octoRateDetail = t.type === 'octopus_day_night'
+    const octoRateDetail = t.type === 'octopus_seg'
+      ? `<div class="rate-detail-row">
+           <span>Export rate: <strong>${escHtml(t.export_rate??'?')}p/kWh</strong></span>
+           ${t.is_current_export ? '<span class="seg-current-badge">✓ Active export tariff</span>' : ''}
+         </div>`
+      : t.type === 'octopus_day_night'
       ? `<div class="rate-detail-row">
            <span>Day rate: <strong>${escHtml(t.day_rate??'?')}p/kWh</strong></span>
            <span>Night rate: <strong>${escHtml(t.night_rate??'?')}p/kWh</strong></span>
@@ -1120,7 +1134,11 @@ function renderTariffs() {
           <div class="tariff-actions">
             ${actionsHtml}
             <span class="spacer"></span>
-            ${(t.type === 'octopus_flat' || t.type === 'octopus_day_night') ? `<button class="btn-ghost btn-sm" onclick="openOctoEditModal(${i})">&#9998; Edit Rates</button>` : ''}
+            ${t.type === 'octopus_seg'
+              ? `<button class="btn-ghost btn-sm" onclick="setCurrentExportTariff(${i})">${t.is_current_export ? '★ Active' : '☆ Set as Active'}</button>`
+              : t.type !== 'octopus_agile'
+              ? `<button class="btn-ghost btn-sm" onclick="openOctoEditModal(${i})">&#9998; Edit Rates</button>`
+              : ''}
             <button class="btn-danger btn-sm" onclick="removeTariff(${i})">Remove</button>
           </div>
         </div>`
@@ -1210,7 +1228,8 @@ function renderTariffs() {
         <span class="tariff-chevron ${t._open ? 'open' : ''}">&#9658;</span>
         <span class="tariff-title">${escHtml(t.name || 'Unnamed Tariff')}</span>
         <span class="tariff-badges">
-          ${isBaseline ? '<span class="tariff-badge badge-baseline">&#9733; Current Tariff</span>' : ''}
+          ${isBaseline && t.type !== 'octopus_seg' ? '<span class="tariff-badge badge-baseline">&#9733; Current Import Tariff</span>' : ''}
+          ${t.type === 'octopus_seg' && t.is_current_export ? '<span class="tariff-badge badge-seg-active">&#9733; Current Export Tariff</span>' : ''}
           <span class="tariff-badge ${badgeClass}">${typeLabel}</span>
         </span>
       </div>
@@ -1250,11 +1269,13 @@ function addTariff(type) {
 async function removeTariff(i) {
   const t = _tariffs[i];
   const removedId = t.id || slugify(t.name);
-  const isOcto = t.type === 'octopus_flat' || t.type === 'octopus_agile' || t.type === 'octopus_day_night';
+  const isOcto = t.type === 'octopus_flat' || t.type === 'octopus_agile' || t.type === 'octopus_day_night' || t.type === 'octopus_seg';
   const isEdf  = t.type === 'edf_flat'     || t.type === 'edf_agile'     || t.type === 'edf_day_night';
   if ((isOcto || isEdf) && removedId) {
     const endpoint = isEdf
       ? `/api/edf/tariff/${encodeURIComponent(removedId)}`
+      : t.type === 'octopus_seg'
+      ? `/api/octopus/seg-tariff/${encodeURIComponent(removedId)}`
       : `/api/octopus/tariff/${encodeURIComponent(removedId)}`;
     try {
       const r = await fetch(endpoint, { method: 'DELETE' });
@@ -1372,7 +1393,7 @@ async function saveConfig() {
       export_mpan:    document.getElementById('acct-export-mpan').value.trim(),
       export_serial:  document.getElementById('acct-export-serial').value.trim(),
     },
-    tariffs: _tariffs.filter(t => !['octopus_flat','octopus_agile','octopus_day_night','edf_flat','edf_agile','edf_day_night'].includes(t.type)).map(t => {
+    tariffs: _tariffs.filter(t => !['octopus_flat','octopus_agile','octopus_day_night','octopus_seg','edf_flat','edf_agile','edf_day_night'].includes(t.type)).map(t => {
       const base = {
         id:              t.id || slugify(t.name),
         name:            t.name,
@@ -1744,6 +1765,7 @@ function _normOctoStored(t) {
     product_code:    t.product_code ?? '',
     tariff_code:     t.tariff_code  ?? '',
     gsp_region:      t.gsp_region   ?? '',
+    is_current_export: t.is_current_export ?? false,
     _open:           false,
   };
   if (t.type === 'octopus_day_night') {
@@ -1751,7 +1773,7 @@ function _normOctoStored(t) {
     base.night_rate  = String(t.night_rate ?? '');
     base.night_start = t.night_start ?? '00:00';
     base.night_end   = t.night_end   ?? '07:00';
-  } else {
+  } else if (t.type !== 'octopus_seg') {
     base.import_rate = String(t.import_rate ?? '');
   }
   return base;
@@ -2332,6 +2354,20 @@ async function testOctopusAccount() {
       }
     }
 
+    // Show SEG import panel if an export tariff was detected
+    // (independent of whether an import tariff was also detected)
+    const segPanel = document.getElementById('acct-detected-seg');
+    if (d.active_seg_product_code) {
+      segPanel.dataset.productCode = d.active_seg_product_code;
+      segPanel.dataset.tariffCode  = d.active_seg_tariff_code || '';
+      segPanel.dataset.gspRegion   = d.active_gsp_region || '';
+      document.getElementById('acct-seg-tariff-code').textContent =
+        d.active_seg_tariff_code || d.active_seg_product_code;
+      segPanel.style.display = '';
+    } else {
+      segPanel.style.display = 'none';
+    }
+
   } catch(e) {
     statusEl.textContent = '✗ Request failed: ' + e.message;
     statusEl.className   = 'err';
@@ -2374,6 +2410,71 @@ async function acctImportDetectedTariff() {
     statusEl.className   = 'err';
     btn.disabled   = false;
     btn.textContent = '+ Import This Tariff';
+  }
+}
+
+async function setCurrentExportTariff(i) {
+  const t = _tariffs[i];
+  try {
+    const r = await fetch(`/api/octopus/seg-tariff/${encodeURIComponent(t.id)}/set-current`, {
+      method: 'PATCH',
+    });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error);
+    _tariffs.forEach(x => { if (x.type === 'octopus_seg') x.is_current_export = false; });
+    _tariffs[i].is_current_export = true;
+    renderTariffs();
+    toast('Export tariff set as active ✓', 'ok');
+  } catch(e) {
+    toast('Failed to set export tariff: ' + e.message, 'err');
+  }
+}
+
+async function acctImportSEGTariff() {
+  const seg      = document.getElementById('acct-detected-seg');
+  const btn      = document.getElementById('acct-seg-import-btn');
+  const statusEl = document.getElementById('acct-status');
+  btn.disabled   = true;
+  btn.textContent = 'Importing…';
+
+  try {
+    const r = await fetch('/api/octopus/import-seg-tariff', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        product_code: seg.dataset.productCode,
+        tariff_code:  seg.dataset.tariffCode,
+        gsp_region:   seg.dataset.gspRegion,
+      }),
+    });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error);
+
+    _tariffs = _tariffs.filter(t => t.id !== d.tariff_id);
+    _tariffs.push({
+      id:                d.tariff_id,
+      name:              d.tariff_name,
+      type:              'octopus_seg',
+      export_rate:       String(d.export_rate_p),
+      standing_charge:   '0',
+      product_code:      d.product_code,
+      tariff_code:       d.tariff_code,
+      gsp_region:        d.gsp_region,
+      is_current_export: false,
+      _open:             false,
+    });
+
+    renderTariffs();
+    seg.style.display    = 'none';
+    statusEl.textContent = `✓ SEG export tariff ${d.tariff_code} imported`;
+    statusEl.className   = 'ok';
+    toast('SEG export tariff imported ✓', 'ok');
+
+  } catch(e) {
+    statusEl.textContent = '✗ SEG import failed: ' + e.message;
+    statusEl.className   = 'err';
+    btn.disabled   = false;
+    btn.textContent = '+ Import SEG Tariff';
   }
 }
 </script>
