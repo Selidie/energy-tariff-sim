@@ -56,9 +56,9 @@ _EDF_CACHE_PATH = os.environ.get(
 
 def _save_octo_tariffs():
     """Persist all in-memory Octopus tariffs to disk as JSON."""
-    from app.tariffs import OctopusFlatTariff, OctopusDayNightTariff, OctopusTimeOfUseTariff
+    from app.tariffs import OctopusFlatTariff, OctopusDayNightTariff, OctopusTimeOfUseTariff, OctopusSEGTariff
     octo = [t.to_dict() for t in _tariffs
-            if isinstance(t, (OctopusFlatTariff, OctopusDayNightTariff, OctopusTimeOfUseTariff))]
+            if isinstance(t, (OctopusFlatTariff, OctopusDayNightTariff, OctopusTimeOfUseTariff, OctopusSEGTariff))]
     try:
         cache_dir = os.path.dirname(_OCTO_CACHE_PATH)
         if cache_dir:
@@ -113,6 +113,19 @@ def _load_octo_tariffs() -> list:
                     'gsp_region':     entry.get('gsp_region', ''),
                 }
                 loaded.append(OctopusDayNightTariff(cfg))
+            elif ttype == 'octopus_seg':
+                from app.tariffs import OctopusSEGTariff
+                cfg = {
+                    'id':                entry['id'],
+                    'name':              entry['name'],
+                    'standing_charge':   entry.get('standing_charge', 0),
+                    'export_rate':       entry.get('export_rate', 0),
+                    'product_code':      entry.get('product_code', ''),
+                    'tariff_code':       entry.get('tariff_code', ''),
+                    'gsp_region':        entry.get('gsp_region', ''),
+                    'is_current_export': entry.get('is_current_export', False),
+                }
+                loaded.append(OctopusSEGTariff(cfg))
             elif ttype == 'octopus_agile':
                 # For time-of-use tariffs we need the raw rates — stored in
                 # the octopus_client cache, so re-fetch from there
@@ -353,10 +366,10 @@ def get_config():
 
         # Append any in-memory Octopus tariffs so the UI can restore them
         # after a page navigation (they are not written to settings.yaml)
-        from app.tariffs import OctopusFlatTariff, OctopusDayNightTariff, OctopusTimeOfUseTariff
+        from app.tariffs import OctopusFlatTariff, OctopusDayNightTariff, OctopusTimeOfUseTariff, OctopusSEGTariff
         octo_tariffs = [
             t.to_dict() for t in _tariffs
-            if isinstance(t, (OctopusFlatTariff, OctopusDayNightTariff, OctopusTimeOfUseTariff))
+            if isinstance(t, (OctopusFlatTariff, OctopusDayNightTariff, OctopusTimeOfUseTariff, OctopusSEGTariff))
         ]
         if octo_tariffs:
             raw.setdefault('octopus_tariffs', octo_tariffs)
@@ -444,6 +457,7 @@ def save_config():
         _cfg     = cfg_module.load(_SETTINGS_PATH)
         _tariffs = load_tariffs(_cfg)
         _tariffs += _load_octo_tariffs()
+        _tariffs += _load_edf_tariffs()
         _config_changed_at = datetime.now(timezone.utc).isoformat()
         return jsonify({'success': True})
     except Exception as e:
@@ -1210,6 +1224,9 @@ def octopus_import_tariff():
                     "error": f"Could not resolve tariff code for {product_code} / {gsp_region}"
                 }), 400
 
+        log.info("octopus_import_tariff: product=%s tariff=%s gsp=%s",
+                 product_code, tariff_code, gsp_region)
+
         # Determine date range
         today = _dt.now(_tz_mod.utc)
         if body.get("date_to"):
@@ -1270,8 +1287,8 @@ def octopus_import_tariff():
             for s in rates[:4]:
                 log.info("  slot: rate=%.4f from=%s to=%s payment=%s",
                          s.get('value_inc_vat', 0),
-                         s.get('valid_from', '?')[:19],
-                         s.get('valid_to',   '?')[:19],
+                         (s.get('valid_from') or '?')[:19],
+                         (s.get('valid_to')   or 'open')[:19],
                          s.get('payment_method', 'none'))
             day_night = _parse_day_night_slots(rates)
             log.info("_parse_day_night_slots result: %s", day_night)
@@ -1422,6 +1439,140 @@ def octopus_edit_tariff(tariff_id):
     _config_changed_at = datetime.now(timezone.utc).isoformat()
     return jsonify({"success": True, "tariff": tariff.to_dict()})
 
+@app.post("/api/octopus/import-seg-tariff")
+def octopus_import_seg_tariff():
+    """
+    Fetch SEG export rates from the Octopus API and add as an export tariff.
+
+    Expected JSON body:
+      {
+        "product_code": "OUTGOING-FIX-12M-19-05-13",
+        "tariff_code":  "E-1R-OUTGOING-FIX-12M-19-05-13-B",  // optional
+        "gsp_region":   "_B",                                  // optional
+        "date_from":    "YYYY-MM-DD",                          // optional
+        "date_to":      "YYYY-MM-DD",                          // optional
+      }
+    """
+    global _tariffs, _config_changed_at
+    from app.tariffs import OctopusSEGTariff
+    try:
+        body = request.get_json(force=True) or {}
+
+        product_code = body.get("product_code", "").strip()
+        if not product_code:
+            return jsonify({"success": False, "error": "product_code is required"}), 400
+
+        gsp_region  = body.get("gsp_region", "_C").strip()
+        tariff_code = body.get("tariff_code", "").strip()
+
+        if not tariff_code:
+            detail      = _octo.get_product_detail(product_code)
+            tariff_code = _octo.resolve_tariff_code(detail, gsp_region)
+            if not tariff_code:
+                return jsonify({
+                    "success": False,
+                    "error":   f"Could not resolve tariff code for {product_code} / {gsp_region}",
+                }), 400
+
+        today = _dt.now(_tz_mod.utc)
+        date_to   = _dt.fromisoformat(body["date_to"]).replace(tzinfo=_tz_mod.utc) \
+                    if body.get("date_to") else today
+        if body.get("date_from"):
+            date_from = _dt.fromisoformat(body["date_from"]).replace(tzinfo=_tz_mod.utc)
+        else:
+            days      = _parse_history_days(_history_range())
+            date_from = _dt(today.year - (days // 365), today.month, today.day, tzinfo=_tz_mod.utc)
+
+        rates = _octo.get_seg_tariff_rates(product_code, tariff_code, date_from, date_to)
+        if not rates:
+            return jsonify({
+                "success": False,
+                "error":   "No export rates returned from Octopus API for the requested period",
+            }), 502
+
+        # Most recent rate = current SEG rate
+        rates.sort(key=lambda x: x.get("valid_from", ""), reverse=True)
+        export_rate_p = round(float(rates[0].get("value_inc_vat", 0.0)), 4)
+
+        try:
+            detail_name = _octo.get_product_detail(product_code).get("display_name", product_code)
+        except Exception:
+            detail_name = product_code
+
+        tariff_id   = _slugify(f"octo_seg_{product_code}_{gsp_region}")
+        tariff_name = f"{detail_name} SEG ({_GSP_REGION_LABELS.get(gsp_region, gsp_region)})"
+
+        new_tariff = OctopusSEGTariff({
+            "id":               tariff_id,
+            "name":             tariff_name,
+            "standing_charge":  0.0,
+            "export_rate":      export_rate_p,
+            "product_code":     product_code,
+            "tariff_code":      tariff_code,
+            "gsp_region":       gsp_region,
+            "is_current_export": False,
+        })
+
+        _tariffs = [t for t in _tariffs if t.id != tariff_id]
+        _tariffs.append(new_tariff)
+
+        _save_octo_tariffs()
+        _config_changed_at = datetime.now(timezone.utc).isoformat()
+
+        log.info("Imported Octopus SEG tariff %s (%s) — export rate %.4fp/kWh",
+                 tariff_id, tariff_code, export_rate_p)
+
+        return jsonify({
+            "success":        True,
+            "tariff_id":      tariff_id,
+            "tariff_code":    tariff_code,
+            "product_code":   product_code,
+            "gsp_region":     gsp_region,
+            "tariff_name":    tariff_name,
+            "tariff_type":    "octopus_seg",
+            "export_rate_p":  export_rate_p,
+        })
+
+    except requests.exceptions.ConnectionError as e:
+        return jsonify({"success": False, "error": f"Could not reach Octopus API: {e}"}), 502
+    except requests.exceptions.HTTPError as e:
+        return jsonify({"success": False, "error": f"Octopus API error: {e}"}), 502
+    except Exception as e:
+        log.exception("octopus_import_seg_tariff failed")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.patch("/api/octopus/seg-tariff/<tariff_id>/set-current")
+def octopus_set_current_export(tariff_id):
+    """
+    Tag one SEG tariff as the current export tariff. Clears the flag on all
+    others. The simulator will use this tariff's export_rate for all exports.
+    """
+    global _tariffs, _config_changed_at
+    from app.tariffs import OctopusSEGTariff
+    target = next((t for t in _tariffs if t.id == tariff_id), None)
+    if target is None or not isinstance(target, OctopusSEGTariff):
+        return jsonify({"success": False, "error": f"SEG tariff not found: {tariff_id}"}), 404
+
+    for t in _tariffs:
+        if isinstance(t, OctopusSEGTariff):
+            t.is_current_export = (t.id == tariff_id)
+
+    _save_octo_tariffs()
+    _config_changed_at = datetime.now(timezone.utc).isoformat()
+    log.info("Set current export tariff: %s", tariff_id)
+    return jsonify({"success": True, "current_export_tariff_id": tariff_id})
+
+@app.delete("/api/octopus/seg-tariff/<tariff_id>")
+def octopus_remove_seg_tariff(tariff_id):
+    """Remove a SEG tariff from the in-memory list."""
+    global _tariffs, _config_changed_at
+    before   = len(_tariffs)
+    _tariffs = [t for t in _tariffs if t.id != tariff_id]
+    _save_octo_tariffs()
+    _config_changed_at = datetime.now(timezone.utc).isoformat()
+    return jsonify({"success": True, "removed": before - len(_tariffs)})
+
 @app.delete("/api/octopus/cache")
 def octopus_clear_cache():
     """Delete all locally cached Octopus API responses."""
@@ -1430,7 +1581,6 @@ def octopus_clear_cache():
         return jsonify({"success": True, "files_removed": removed})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
-
 
 @app.post("/api/octopus/account/test")
 def octopus_account_test():
@@ -1477,15 +1627,26 @@ def octopus_account_test():
         active_code  = active_agr.get('tariff_code', '') if active_agr else ''
         parsed       = _octo.parse_tariff_code(active_code)
 
+        # Also look up SEG export agreements from the account
+        account_number = body.get('account_number', '').strip() or \
+                         _cfg.get('octopus_account', {}).get('account_number', '').strip()
+        seg_agreements = _octo.get_export_agreements(api_key, account_number)
+        active_seg     = _octo.get_active_tariff_from_agreements({"agreements": seg_agreements}) \
+                         if seg_agreements else None
+        active_seg_code = active_seg.get('tariff_code', '') if active_seg else ''
+        parsed_seg      = _octo.parse_tariff_code(active_seg_code) or {}
+
         return jsonify({
             'success':        True,
             'mpan':           meter_point.get('mpan', import_mpan),
             'gsp':            meter_point.get('gsp', ''),
             'profile_class':  meter_point.get('profile_class', ''),
-            'active_tariff_code':  active_code,
-            'active_product_code': parsed['product_code'],
-            'active_gsp_region':   parsed['gsp_region'] or meter_point.get('gsp', ''),
-            'agreements':     meter_point.get('agreements', []),
+            'active_tariff_code':      active_code,
+            'active_product_code':     parsed['product_code'],
+            'active_gsp_region':       parsed['gsp_region'] or meter_point.get('gsp', ''),
+            'agreements':              meter_point.get('agreements', []),
+            'active_seg_tariff_code':  active_seg_code,
+            'active_seg_product_code': parsed_seg.get('product_code', ''),
         })
 
     except requests.exceptions.HTTPError as e:

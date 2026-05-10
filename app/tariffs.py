@@ -219,6 +219,43 @@ class OctopusDayNightTariff(BaseTariff):
         })
         return d
 
+
+# ---------------------------------------------------------------------------
+# Octopus SEG export tariff  (Smart Export Guarantee)
+# ---------------------------------------------------------------------------
+class OctopusSEGTariff(BaseTariff):
+    """
+    A flat-rate SEG export tariff from Octopus.
+    The export_rate is the p/kWh paid for exported energy.
+    import_rate returns 0 — this tariff only earns on export.
+    """
+    def __init__(self, cfg: dict):
+        super().__init__(cfg)
+        self.product_code = cfg.get('product_code', '')
+        self.tariff_code  = cfg.get('tariff_code', '')
+        self.gsp_region   = cfg.get('gsp_region', '')
+        self.is_current_export = cfg.get('is_current_export', False)
+
+    def import_rate(self, dt=None) -> float:
+        return 0.0
+
+    def export_rate(self, dt=None) -> float:
+        return self._export_rate
+
+    def to_dict(self) -> dict:
+        d = super().to_dict()
+        d.update({
+            'type':               'octopus_seg',
+            'export_rate':        self._export_rate,
+            'standing_charge':    self.standing_charge,
+            'product_code':       self.product_code,
+            'tariff_code':        self.tariff_code,
+            'gsp_region':         self.gsp_region,
+            'is_current_export':  self.is_current_export,
+        })
+        return d
+
+
 def _parse_time(s: str) -> time:
     h, m = s.split(':')
     return time(int(h), int(m))
@@ -280,6 +317,7 @@ _TYPE_MAP = {
     'octopus_flat':     OctopusFlatTariff,
     'octopus_day_night': OctopusDayNightTariff,
     'octopus_agile':    OctopusTimeOfUseTariff,
+    'octopus_seg':       OctopusSEGTariff,
     'edf_flat':          EdfFlatTariff,
     'edf_day_night':     EdfDayNightTariff,
     'edf_agile':         EdfTimeOfUseTariff,

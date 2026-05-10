@@ -330,9 +330,12 @@ def get_account_agreements(api_key: str, account_number: str) -> list:
         return []
 
     # Walk properties → electricity meter-points → agreements
+    # Exclude export meter points — only return import tariff agreements
     agreements = []
     for prop in account.get("properties", []):
         for meter_point in prop.get("electricity_meter_points", []):
+            if meter_point.get("is_export", False):
+                continue
             for agr in meter_point.get("agreements", []):
                 if agr.get("tariff_code"):
                     agreements.append(agr)
@@ -418,6 +421,63 @@ def classify_tariff(tariff_code: str) -> str:
     if '-1R-' in tc:
         return 'single_register'
     return 'unknown'
+
+
+def get_seg_tariff_rates(product_code: str,
+                         tariff_code: str,
+                         period_from: datetime,
+                         period_to: datetime) -> list:
+    """
+    Fetch export unit rates for a SEG tariff from /standard-unit-rates/.
+    SEG tariffs use the same endpoint as flat import tariffs.
+    Returns [] on 404.
+    """
+    from_str  = period_from.strftime("%Y-%m-%dT%H:%M:%SZ")
+    to_str    = period_to.strftime("%Y-%m-%dT%H:%M:%SZ")
+    cache_key = f"seg_rates_{tariff_code}_{from_str}_{to_str}"
+    cached    = _cache_read(cache_key)
+    if cached is not None:
+        return cached
+
+    url    = (f"{_BASE_URL}/products/{product_code}"
+              f"/electricity-tariffs/{tariff_code}/standard-unit-rates/")
+    params = {"period_from": from_str, "period_to": to_str, "page_size": _PAGE_SIZE}
+    try:
+        rates = _paginate(url, params)
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 404:
+            return []
+        raise
+    _cache_write(cache_key, rates)
+    return rates
+
+
+def get_export_agreements(api_key: str, account_number: str) -> list:
+    """
+    Fetch SEG export tariff agreements from the account API.
+    Returns list of agreement dicts with tariff_code, valid_from, valid_to.
+    Filters to export-direction electricity meter points only.
+    """
+    if not account_number:
+        return []
+    try:
+        account = _get_auth(f"{_BASE_URL}/accounts/{account_number}/", api_key)
+    except Exception as e:
+        log.warning("Could not fetch account for export agreements %s: %s", account_number, e)
+        return []
+
+    agreements = []
+    for prop in account.get("properties", []):
+        for mp in prop.get("electricity_meter_points", []):
+            # Export meter points have is_export=True or contain an export MPAN
+            if not mp.get("is_export", False):
+                continue
+            for agr in mp.get("agreements", []):
+                if agr.get("tariff_code"):
+                    agreements.append(agr)
+
+    log.info("Found %d SEG export agreement(s) for account %s", len(agreements), account_number)
+    return agreements
 
 
 def get_consumption(mpan: str,

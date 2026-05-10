@@ -163,10 +163,27 @@ def total_summary(detail_df: pd.DataFrame, tariff) -> dict:
 
 
 def compare_tariffs(agg_df: pd.DataFrame, tariffs: list, tz: str = 'UTC') -> dict:
+    from app.tariffs import OctopusSEGTariff
+
+    # Find the active SEG export tariff (if any) and extract its rate
+    seg_tariff = next(
+        (t for t in tariffs if isinstance(t, OctopusSEGTariff) and t.is_current_export),
+        None
+    )
+    seg_rate = seg_tariff.export_rate() if seg_tariff else None
+
+    # Only simulate import tariffs — SEG tariffs are not simulated independently
+    import_tariffs = [t for t in tariffs if not isinstance(t, OctopusSEGTariff)]
+
     results   = {}
     summaries = []
-    for tariff in tariffs:
+    for tariff in import_tariffs:
+        # Inject the active SEG rate into this tariff's export rate for simulation
+        original_export_rate = tariff._export_rate
+        if seg_rate is not None:
+            tariff._export_rate = seg_rate
         detail  = simulate_tariff(agg_df, tariff, tz=tz)
+        tariff._export_rate = original_export_rate  # restore after simulation
         daily   = daily_summary(detail, tz=tz)
         monthly = monthly_summary(daily)
         yearly  = yearly_summary(daily)
