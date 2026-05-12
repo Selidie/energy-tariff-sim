@@ -1714,6 +1714,93 @@ def _parse_history_days(history_range: str) -> int:
         pass
     return 365
 
+@app.get("/api/octopus/consumption")
+def octopus_consumption():
+    """
+    Return half-hourly consumption data from the Octopus API for a given date.
+
+    Query params:
+      date   YYYY-MM-DD in Europe/London local time (defaults to today)
+
+    Uses credentials from octopus_account in settings.yaml:
+      api_key, import_mpan, import_serial
+
+    Response:
+    {
+      "success": true,
+      "date": "2025-05-12",
+      "slots": [
+        { "interval_start": "2025-05-12T00:00:00+01:00",
+          "interval_end":   "2025-05-12T00:30:00+01:00",
+          "consumption_kwh": 0.312 },
+        ...
+      ]
+    }
+    """
+    import zoneinfo
+    from datetime import date as _date_type
+
+    LOCAL_TZ = zoneinfo.ZoneInfo('Europe/London')
+
+    acct = _cfg.get('octopus_account', {})
+    api_key = acct.get('api_key', '').strip()
+    mpan    = acct.get('import_mpan', '').strip()
+    serial  = acct.get('import_serial', '').strip()
+
+    if not api_key or not mpan or not serial:
+        return jsonify({
+            'success': False,
+            'error':   'Octopus account credentials not fully configured (api_key, import_mpan, import_serial required)'
+        }), 400
+
+    date_str = request.args.get('date', '').strip()
+    try:
+        if date_str:
+            local_date = _dt.strptime(date_str, '%Y-%m-%d').date()
+        else:
+            local_date = _dt.now(LOCAL_TZ).date()
+    except ValueError:
+        return jsonify({'success': False, 'error': f'Invalid date format: {date_str!r} — use YYYY-MM-DD'}), 400
+
+    # Build UTC range that covers the full local day, accounting for BST/GMT
+    day_start = _dt(local_date.year, local_date.month, local_date.day,
+                    0, 0, 0, tzinfo=LOCAL_TZ)
+    day_end   = _dt(local_date.year, local_date.month, local_date.day,
+                    23, 59, 59, tzinfo=LOCAL_TZ)
+
+    period_from = day_start.astimezone(_tz_mod.utc)
+    period_to   = day_end.astimezone(_tz_mod.utc)
+
+    try:
+        raw = _octo.get_consumption(mpan, serial, api_key, period_from, period_to)
+    except requests.exceptions.HTTPError as e:
+        status = e.response.status_code if e.response is not None else 0
+        if status == 401:
+            return jsonify({'success': False, 'error': 'Octopus API key invalid (401)'}), 502
+        return jsonify({'success': False, 'error': f'Octopus API error: {e}'}), 502
+    except Exception as e:
+        log.exception('octopus_consumption failed')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+    slots = []
+    for item in raw:
+        try:
+            start = _dt.fromisoformat(item['interval_start'].replace('Z', '+00:00'))
+            end   = _dt.fromisoformat(item['interval_end'].replace('Z', '+00:00'))
+            slots.append({
+                'interval_start':  start.astimezone(LOCAL_TZ).isoformat(),
+                'interval_end':    end.astimezone(LOCAL_TZ).isoformat(),
+                'consumption_kwh': round(float(item['consumption']), 4),
+            })
+        except (KeyError, ValueError):
+            continue
+
+    return jsonify({
+        'success': True,
+        'date':    local_date.isoformat(),
+        'slots':   slots,
+    })
+
 # ── Solar Assistant Import API ─────────────────────────────────────────────
 
 _sa_import_lock    = threading.Lock()
