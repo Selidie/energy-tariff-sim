@@ -198,6 +198,7 @@ Topic names written by the import match the live mqtt-bridge schema (`inverter_1
 | GET | `/api/bridge/topics` | All topics seen by mqtt-bridge |
 | GET | `/api/bridge/topics/numeric` | Numeric topics only |
 | GET | `/api/bridge/diagnose` | Full bridge diagnostic — MQTT status, InfluxDB, topic mapping |
+| GET | `/api/octopus/consumption` | Half-hourly import consumption for a given date (`?date=YYYY-MM-DD`). Uses stored account credentials. Used by home-dashboard Electricity Usage page. |
 | GET | `/api/octopus/products` | List Octopus Electricity products |
 | GET | `/api/octopus/products/<product code>` | Full details for one Octopus Electricity product |
 | GET | `/api/octopus/products/<product code>/tariff-codes` | GSP region > tariff code map |
@@ -225,7 +226,15 @@ curl -X POST http://localhost:5011/run \
   -d '{"date_from": "2024-11-01", "date_to": "2025-03-31"}'
 ```
 
-When `date_from` / `date_to` are supplied they override `history_range`. The bridge is queried for enough history to cover the window and the result is clipped to the exact dates requested.
+### Octopus consumption endpoint
+
+```bash
+curl "http://localhost:5011/api/octopus/consumption?date=2026-05-10"
+```
+
+Returns 48 half-hourly slots for the given date using the `import_mpan`, `import_serial`, and `api_key` from `octopus_account` in `settings.yaml`. Timestamps are returned in `Europe/London` local time.
+
+> **Note:** Octopus consumption data is typically available 48 hours after the metering period ends. Requests for today or yesterday will return an empty slots array.
 
 ---
 
@@ -380,6 +389,13 @@ energy-tariff-sim/
 | `requests` | HTTP calls to mqtt-bridge |
 | `influxdb-client` | InfluxDB 2.x writes for Solar Assistant import |
 | `apscheduler` | (available for scheduled runs) |
+
+---
+
+## Related projects
+
+- [mqtt-bridge](https://github.com/Selidie/mqtt-bridge) — Solar Assistant MQTT cache, HTTP API, and InfluxDB writer; provides Solar Assistant data for comparison on the home-dashboard Electricity Usage page
+- [home-dashboard](https://github.com/Selidie/home-dashboard) — Web UI that proxies `/api/octopus/consumption` to display half-hourly Octopus vs Solar Assistant usage comparison
 
 ---
 
