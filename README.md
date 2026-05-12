@@ -236,8 +236,6 @@ Returns 48 half-hourly slots for the given date using the `import_mpan`, `import
 
 > **Note:** Octopus consumption data is typically available 48 hours after the metering period ends. Requests for today or yesterday will return an empty slots array.
 
-When `date_from` / `date_to` are supplied they override `history_range`. The bridge is queried for enough history to cover the window and the result is clipped to the exact dates requested.
-
 ---
 
 ## Simulation output fields
