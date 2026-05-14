@@ -1886,6 +1886,206 @@ def octopus_export():
         'slots':   slots,
     })
 
+@app.get("/api/energy/cost")
+def energy_cost():
+    """
+    Calculate daily and monthly energy cost using Octopus consumption/export
+    data and rates from the loaded Octopus import and SEG tariff objects.
+
+    Query params:
+      date   YYYY-MM-DD (Europe/London) — defaults to 2 days ago
+
+    All values in pence unless noted. Pounds conversion done client-side.
+    """
+    import zoneinfo
+    import calendar as _cal
+    from app.tariffs import OctopusDayNightTariff, OctopusFlatTariff, OctopusSEGTariff
+
+    LOCAL_TZ = zoneinfo.ZoneInfo('Europe/London')
+
+    # ── Resolve import tariff ─────────────────────────────────────────────
+    # Prefer the baseline tariff if set, otherwise first Octopus import tariff
+    baseline_id  = _baseline_id()
+    import_tariff = None
+    if baseline_id:
+        import_tariff = next((t for t in _tariffs if t.id == baseline_id
+                              and isinstance(t, (OctopusDayNightTariff, OctopusFlatTariff))), None)
+    if import_tariff is None:
+        import_tariff = next((t for t in _tariffs
+                              if isinstance(t, (OctopusDayNightTariff, OctopusFlatTariff))), None)
+    if import_tariff is None:
+        return jsonify({'success': False,
+                        'error': 'No import tariff loaded — import an Octopus tariff first'}), 400
+
+    # Extract rate fields
+    if isinstance(import_tariff, OctopusDayNightTariff):
+        day_rate_p    = float(import_tariff._day_rate)
+        night_rate_p  = float(import_tariff._night_rate)
+        night_start   = import_tariff._night_start.strftime('%H:%M')
+        night_end     = import_tariff._night_end.strftime('%H:%M')
+    else:
+        day_rate_p    = float(import_tariff._import_rate)
+        night_rate_p  = day_rate_p
+        night_start   = '00:00'
+        night_end     = '00:00'
+
+    standing_charge_p = float(import_tariff.standing_charge)
+
+    # ── Resolve SEG export tariff ─────────────────────────────────────────
+    export_rate_p = 0.0
+    seg_tariff    = None
+    for t in _tariffs:
+        if isinstance(t, OctopusSEGTariff) and getattr(t, 'is_current_export', False):
+            seg_tariff = t
+            break
+    if seg_tariff is None:
+        seg_tariff = next((t for t in _tariffs if isinstance(t, OctopusSEGTariff)), None)
+    if seg_tariff:
+        export_rate_p = float(seg_tariff._export_rate)
+
+    # ── Parse requested date ──────────────────────────────────────────────
+    date_str = request.args.get('date', '').strip()
+    try:
+        if date_str:
+            local_date = _dt.strptime(date_str, '%Y-%m-%d').date()
+        else:
+            from datetime import timedelta
+            local_date = (_dt.now(LOCAL_TZ) - timedelta(days=2)).date()
+    except ValueError:
+        return jsonify({'success': False,
+                        'error': f'Invalid date: {date_str!r} — use YYYY-MM-DD'}), 400
+
+    acct          = _cfg.get('octopus_account', {})
+    api_key       = acct.get('api_key', '').strip()
+    import_mpan   = acct.get('import_mpan', '').strip()
+    import_serial = acct.get('import_serial', '').strip()
+    export_mpan   = acct.get('export_mpan', '').strip()
+    export_serial = acct.get('export_serial', '').strip()
+
+    if not api_key or not import_mpan or not import_serial:
+        return jsonify({'success': False,
+                        'error': 'Octopus import credentials not configured'}), 400
+
+    # ── Helpers ───────────────────────────────────────────────────────────
+    def _is_night(slot_local: _dt) -> bool:
+        """True if slot_local falls within the night rate window."""
+        from datetime import time as _time
+        ns_h, ns_m = int(night_start[:2]), int(night_start[3:])
+        ne_h, ne_m = int(night_end[:2]),   int(night_end[3:])
+        t  = slot_local.hour * 60 + slot_local.minute
+        ns = ns_h * 60 + ns_m
+        ne = ne_h * 60 + ne_m
+        if ns < ne:
+            return ns <= t < ne
+        else:                     # window wraps midnight
+            return t >= ns or t < ne
+
+    def _fetch(mpan, serial, period_from, period_to):
+        """Fetch consumption slots → list of (interval_start_local, kwh)."""
+        if not mpan or not serial:
+            return []
+        try:
+            raw = _octo.get_consumption(mpan, serial, api_key, period_from, period_to)
+        except Exception as e:
+            log.warning('Octopus fetch failed mpan=%s: %s', mpan, e)
+            return []
+        out = []
+        for item in raw:
+            try:
+                start = _dt.fromisoformat(
+                    item['interval_start'].replace('Z', '+00:00')
+                ).astimezone(LOCAL_TZ)
+                out.append((start, float(item['consumption'])))
+            except (KeyError, ValueError):
+                continue
+        return out
+
+    def _cost(import_slots, export_slots):
+        """Return cost components dict (all values in pence)."""
+        import_cost  = sum(
+            kwh * (night_rate_p if _is_night(s) else day_rate_p)
+            for s, kwh in import_slots
+        )
+        export_credit = sum(kwh * export_rate_p for _, kwh in export_slots)
+        return {
+            'import_cost_p':   round(import_cost,   2),
+            'export_credit_p': round(export_credit, 2),
+            'import_kwh':      round(sum(k for _, k in import_slots), 4),
+            'export_kwh':      round(sum(k for _, k in export_slots), 4),
+        }
+
+    # ── Daily ─────────────────────────────────────────────────────────────
+    d_start = _dt(local_date.year, local_date.month, local_date.day,
+                  0, 0, 0, tzinfo=LOCAL_TZ).astimezone(_tz_mod.utc)
+    d_end   = _dt(local_date.year, local_date.month, local_date.day,
+                  23, 59, 59, tzinfo=LOCAL_TZ).astimezone(_tz_mod.utc)
+
+    d_import = _fetch(import_mpan, import_serial, d_start, d_end)
+    d_export = _fetch(export_mpan, export_serial,  d_start, d_end)
+    dc       = _cost(d_import, d_export)
+    d_net    = round(dc['import_cost_p'] + standing_charge_p - dc['export_credit_p'], 2)
+
+    daily = {
+        'date':              local_date.isoformat(),
+        'has_data':          len(d_import) > 0,
+        'import_cost_p':     dc['import_cost_p'],
+        'export_credit_p':   dc['export_credit_p'],
+        'standing_charge_p': round(standing_charge_p, 4),
+        'net_cost_p':        d_net,
+        'import_kwh':        dc['import_kwh'],
+        'export_kwh':        dc['export_kwh'],
+    }
+
+    # ── Monthly ───────────────────────────────────────────────────────────
+    year          = local_date.year
+    month         = local_date.month
+    days_in_month = _cal.monthrange(year, month)[1]
+
+    m_start = _dt(year, month, 1, 0, 0, 0,
+                  tzinfo=LOCAL_TZ).astimezone(_tz_mod.utc)
+    m_end   = _dt(year, month, days_in_month, 23, 59, 59,
+                  tzinfo=LOCAL_TZ).astimezone(_tz_mod.utc)
+
+    m_import = _fetch(import_mpan, import_serial, m_start, m_end)
+    m_export = _fetch(export_mpan, export_serial,  m_start, m_end)
+    mc       = _cost(m_import, m_export)
+
+    days_with_data  = len({s.date() for s, _ in m_import})
+    month_standing  = round(standing_charge_p * days_in_month, 2)
+    m_net           = round(mc['import_cost_p'] + month_standing - mc['export_credit_p'], 2)
+
+    last_day_data   = max((s.day for s, _ in m_import), default=0)
+    month_name      = _cal.month_name[month]
+    month_label     = f'1\u2013{last_day_data} {month_name} {year}' if last_day_data else f'{month_name} {year}'
+
+    monthly = {
+        'month':             f'{year}-{month:02d}',
+        'label':             month_label,
+        'days_with_data':    days_with_data,
+        'days_in_month':     days_in_month,
+        'import_cost_p':     mc['import_cost_p'],
+        'export_credit_p':   mc['export_credit_p'],
+        'standing_charge_p': month_standing,
+        'net_cost_p':        m_net,
+        'import_kwh':        mc['import_kwh'],
+        'export_kwh':        mc['export_kwh'],
+    }
+
+    return jsonify({
+        'success': True,
+        'date':    local_date.isoformat(),
+        'rates': {
+            'day_rate_p':        round(day_rate_p, 4),
+            'night_rate_p':      round(night_rate_p, 4),
+            'night_start':       night_start,
+            'night_end':         night_end,
+            'export_rate_p':     round(export_rate_p, 4),
+            'standing_charge_p': round(standing_charge_p, 4),
+        },
+        'daily':   daily,
+        'monthly': monthly,
+    })
+
 # ── Solar Assistant Import API ─────────────────────────────────────────────
 
 _sa_import_lock    = threading.Lock()
