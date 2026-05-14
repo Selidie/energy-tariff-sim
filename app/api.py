@@ -244,6 +244,12 @@ except Exception as _boot_err:
 
 _config_changed_at = datetime.now(timezone.utc).isoformat()
 
+# ── Octopus month cache ────────────────────────────────────────────────────
+# Keyed by "YYYY-MM-import" / "YYYY-MM-export".
+# Each entry: { 'slots': [...], 'fetched_at': datetime }
+# Entries older than _OCTO_CACHE_TTL_HOURS are re-fetched automatically.
+_octo_month_cache: dict = {}
+_OCTO_CACHE_TTL_HOURS   = 6
 
 def _tz()             -> str: return _cfg.get('simulation', {}).get('timezone', 'UTC')
 def _baseline_id()    -> str: return _cfg.get('simulation', {}).get('baseline_tariff_id', '')
@@ -1886,16 +1892,80 @@ def octopus_export():
         'slots':   slots,
     })
 
+def _get_cached_month_slots(mpan: str, serial: str, api_key: str,
+                             year: int, month: int,
+                             kind: str, local_tz) -> list:
+    """
+    Return Octopus consumption slots for a full calendar month, using an
+    in-memory cache keyed by 'YYYY-MM-<kind>' (kind = 'import' or 'export').
+
+    Cache entries older than _OCTO_CACHE_TTL_HOURS are transparently
+    re-fetched. Returns a list of (interval_start_local, kwh) tuples.
+    """
+    import calendar as _cal
+    from datetime import timedelta
+
+    cache_key   = f'{year}-{month:02d}-{kind}'
+    now_utc     = _dt.now(_tz_mod.utc)
+    cached      = _octo_month_cache.get(cache_key)
+
+    if cached:
+        age_hours = (now_utc - cached['fetched_at']).total_seconds() / 3600
+        if age_hours < _OCTO_CACHE_TTL_HOURS:
+            log.debug('Octopus month cache HIT: %s (age=%.1fh)', cache_key, age_hours)
+            return cached['slots']
+        log.info('Octopus month cache STALE: %s (age=%.1fh) — re-fetching', cache_key, age_hours)
+    else:
+        log.info('Octopus month cache MISS: %s — fetching from Octopus API', cache_key)
+
+    days_in_month = _cal.monthrange(year, month)[1]
+    import zoneinfo
+    LOCAL_TZ = zoneinfo.ZoneInfo('Europe/London')
+
+    m_start = _dt(year, month, 1, 0, 0, 0,
+                  tzinfo=LOCAL_TZ).astimezone(_tz_mod.utc)
+    m_end   = _dt(year, month, days_in_month, 23, 59, 59,
+                  tzinfo=LOCAL_TZ).astimezone(_tz_mod.utc)
+
+    try:
+        raw = _octo.get_consumption(mpan, serial, api_key, m_start, m_end)
+    except Exception as e:
+        log.warning('Octopus fetch failed for %s %s: %s', kind, cache_key, e)
+        # Return stale data if available rather than nothing
+        if cached:
+            log.info('Returning stale cache entry for %s', cache_key)
+            return cached['slots']
+        return []
+
+    slots = []
+    for item in raw:
+        try:
+            start = _dt.fromisoformat(
+                item['interval_start'].replace('Z', '+00:00')
+            ).astimezone(LOCAL_TZ)
+            slots.append((start, float(item['consumption'])))
+        except (KeyError, ValueError):
+            continue
+
+    _octo_month_cache[cache_key] = {
+        'slots':      slots,
+        'fetched_at': now_utc,
+    }
+    log.info('Octopus month cache SET: %s (%d slots)', cache_key, len(slots))
+    return slots
+
 @app.get("/api/energy/cost")
 def energy_cost():
     """
-    Calculate daily and monthly energy cost using Octopus consumption/export
+    Calculate daily and monthly energy cost using cached Octopus consumption
     data and rates from the loaded Octopus import and SEG tariff objects.
 
     Query params:
       date   YYYY-MM-DD (Europe/London) — defaults to 2 days ago
 
-    All values in pence unless noted. Pounds conversion done client-side.
+    Month data is cached in memory for _OCTO_CACHE_TTL_HOURS hours so that
+    switching between dates in the same month is near-instant after the first
+    load. All monetary values returned in pence.
     """
     import zoneinfo
     import calendar as _cal
@@ -1904,40 +1974,42 @@ def energy_cost():
     LOCAL_TZ = zoneinfo.ZoneInfo('Europe/London')
 
     # ── Resolve import tariff ─────────────────────────────────────────────
-    # Prefer the baseline tariff if set, otherwise first Octopus import tariff
-    baseline_id  = _baseline_id()
+    baseline_id   = _baseline_id()
     import_tariff = None
     if baseline_id:
-        import_tariff = next((t for t in _tariffs if t.id == baseline_id
-                              and isinstance(t, (OctopusDayNightTariff, OctopusFlatTariff))), None)
+        import_tariff = next(
+            (t for t in _tariffs if t.id == baseline_id
+             and isinstance(t, (OctopusDayNightTariff, OctopusFlatTariff))), None
+        )
     if import_tariff is None:
-        import_tariff = next((t for t in _tariffs
-                              if isinstance(t, (OctopusDayNightTariff, OctopusFlatTariff))), None)
+        import_tariff = next(
+            (t for t in _tariffs
+             if isinstance(t, (OctopusDayNightTariff, OctopusFlatTariff))), None
+        )
     if import_tariff is None:
         return jsonify({'success': False,
                         'error': 'No import tariff loaded — import an Octopus tariff first'}), 400
 
-    # Extract rate fields
     if isinstance(import_tariff, OctopusDayNightTariff):
-        day_rate_p    = float(import_tariff._day_rate)
-        night_rate_p  = float(import_tariff._night_rate)
-        night_start   = import_tariff._night_start.strftime('%H:%M')
-        night_end     = import_tariff._night_end.strftime('%H:%M')
+        day_rate_p   = float(import_tariff._day_rate)
+        night_rate_p = float(import_tariff._night_rate)
+        night_start  = import_tariff._night_start.strftime('%H:%M')
+        night_end    = import_tariff._night_end.strftime('%H:%M')
     else:
-        day_rate_p    = float(import_tariff._import_rate)
-        night_rate_p  = day_rate_p
-        night_start   = '00:00'
-        night_end     = '00:00'
+        day_rate_p   = float(import_tariff._import_rate)
+        night_rate_p = day_rate_p
+        night_start  = '00:00'
+        night_end    = '00:00'
 
     standing_charge_p = float(import_tariff.standing_charge)
 
     # ── Resolve SEG export tariff ─────────────────────────────────────────
     export_rate_p = 0.0
-    seg_tariff    = None
-    for t in _tariffs:
-        if isinstance(t, OctopusSEGTariff) and getattr(t, 'is_current_export', False):
-            seg_tariff = t
-            break
+    seg_tariff    = next(
+        (t for t in _tariffs
+         if isinstance(t, OctopusSEGTariff) and getattr(t, 'is_current_export', False)),
+        None
+    )
     if seg_tariff is None:
         seg_tariff = next((t for t in _tariffs if isinstance(t, OctopusSEGTariff)), None)
     if seg_tariff:
@@ -1968,8 +2040,6 @@ def energy_cost():
 
     # ── Helpers ───────────────────────────────────────────────────────────
     def _is_night(slot_local: _dt) -> bool:
-        """True if slot_local falls within the night rate window."""
-        from datetime import time as _time
         ns_h, ns_m = int(night_start[:2]), int(night_start[3:])
         ne_h, ne_m = int(night_end[:2]),   int(night_end[3:])
         t  = slot_local.hour * 60 + slot_local.minute
@@ -1977,32 +2047,11 @@ def energy_cost():
         ne = ne_h * 60 + ne_m
         if ns < ne:
             return ns <= t < ne
-        else:                     # window wraps midnight
+        else:
             return t >= ns or t < ne
 
-    def _fetch(mpan, serial, period_from, period_to):
-        """Fetch consumption slots → list of (interval_start_local, kwh)."""
-        if not mpan or not serial:
-            return []
-        try:
-            raw = _octo.get_consumption(mpan, serial, api_key, period_from, period_to)
-        except Exception as e:
-            log.warning('Octopus fetch failed mpan=%s: %s', mpan, e)
-            return []
-        out = []
-        for item in raw:
-            try:
-                start = _dt.fromisoformat(
-                    item['interval_start'].replace('Z', '+00:00')
-                ).astimezone(LOCAL_TZ)
-                out.append((start, float(item['consumption'])))
-            except (KeyError, ValueError):
-                continue
-        return out
-
     def _cost(import_slots, export_slots):
-        """Return cost components dict (all values in pence)."""
-        import_cost  = sum(
+        import_cost   = sum(
             kwh * (night_rate_p if _is_night(s) else day_rate_p)
             for s, kwh in import_slots
         )
@@ -2014,14 +2063,23 @@ def energy_cost():
             'export_kwh':      round(sum(k for _, k in export_slots), 4),
         }
 
-    # ── Daily ─────────────────────────────────────────────────────────────
-    d_start = _dt(local_date.year, local_date.month, local_date.day,
-                  0, 0, 0, tzinfo=LOCAL_TZ).astimezone(_tz_mod.utc)
-    d_end   = _dt(local_date.year, local_date.month, local_date.day,
-                  23, 59, 59, tzinfo=LOCAL_TZ).astimezone(_tz_mod.utc)
+    def _filter_day(slots, date):
+        """Filter cached month slots down to a single date."""
+        return [(s, k) for s, k in slots if s.date() == date]
 
-    d_import = _fetch(import_mpan, import_serial, d_start, d_end)
-    d_export = _fetch(export_mpan, export_serial,  d_start, d_end)
+    # ── Fetch month data (cached) ─────────────────────────────────────────
+    year  = local_date.year
+    month = local_date.month
+
+    m_import = _get_cached_month_slots(
+        import_mpan, import_serial, api_key, year, month, 'import', LOCAL_TZ)
+    m_export = _get_cached_month_slots(
+        export_mpan, export_serial, api_key, year, month, 'export', LOCAL_TZ) \
+        if export_mpan and export_serial else []
+
+    # ── Daily — filter month cache to the requested date ──────────────────
+    d_import = _filter_day(m_import, local_date)
+    d_export = _filter_day(m_export, local_date)
     dc       = _cost(d_import, d_export)
     d_net    = round(dc['import_cost_p'] + standing_charge_p - dc['export_credit_p'], 2)
 
@@ -2036,27 +2094,16 @@ def energy_cost():
         'export_kwh':        dc['export_kwh'],
     }
 
-    # ── Monthly ───────────────────────────────────────────────────────────
-    year          = local_date.year
-    month         = local_date.month
-    days_in_month = _cal.monthrange(year, month)[1]
-
-    m_start = _dt(year, month, 1, 0, 0, 0,
-                  tzinfo=LOCAL_TZ).astimezone(_tz_mod.utc)
-    m_end   = _dt(year, month, days_in_month, 23, 59, 59,
-                  tzinfo=LOCAL_TZ).astimezone(_tz_mod.utc)
-
-    m_import = _fetch(import_mpan, import_serial, m_start, m_end)
-    m_export = _fetch(export_mpan, export_serial,  m_start, m_end)
-    mc       = _cost(m_import, m_export)
-
-    days_with_data  = len({s.date() for s, _ in m_import})
-    month_standing  = round(standing_charge_p * days_in_month, 2)
-    m_net           = round(mc['import_cost_p'] + month_standing - mc['export_credit_p'], 2)
-
-    last_day_data   = max((s.day for s, _ in m_import), default=0)
-    month_name      = _cal.month_name[month]
-    month_label     = f'1\u2013{last_day_data} {month_name} {year}' if last_day_data else f'{month_name} {year}'
+    # ── Monthly — use full cached month slots ─────────────────────────────
+    days_in_month  = _cal.monthrange(year, month)[1]
+    mc             = _cost(m_import, m_export)
+    days_with_data = len({s.date() for s, _ in m_import})
+    month_standing = round(standing_charge_p * days_in_month, 2)
+    m_net          = round(mc['import_cost_p'] + month_standing - mc['export_credit_p'], 2)
+    last_day_data  = max((s.day for s, _ in m_import), default=0)
+    month_name     = _cal.month_name[month]
+    month_label    = (f'1\u2013{last_day_data} {month_name} {year}'
+                      if last_day_data else f'{month_name} {year}')
 
     monthly = {
         'month':             f'{year}-{month:02d}',
