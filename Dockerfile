@@ -19,7 +19,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends docker-ce-cli \
-    && apt-get purge -y --auto-remove curl gnupg \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Python dependencies ────────────────────────────────────────────────────
